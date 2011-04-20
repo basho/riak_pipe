@@ -146,6 +146,11 @@ init([Builder,
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
+wait_upstream_eoi(eoi, #state{workers=[], details=Details}=State) ->
+    ?T(Details, [eoi], {fitting, receive_eoi}),
+    %% no workers to stop
+    forward_eoi(State),
+    {stop, normal, State};
 wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
     [ riak_pipe_vnode:eoi(Pid, Details#fitting_details.fitting)
@@ -212,9 +217,7 @@ wait_workers_done({done, Pid}=M, _From, State) ->
     end,
     case Rest of
         [] ->
-            Details = State#state.details,
-            ?T(Details, [eoi], {fitting, send_eoi}),
-            riak_pipe_fitting:eoi(Details#fitting_details.output),
+            forward_eoi(State),
             {stop, normal, ok, State#state{workers=[]}};
         _ ->
             {reply, ok, wait_workers_done, State#state{workers=Rest}}
@@ -312,6 +315,10 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+forward_eoi(#state{details=Details}) ->
+    ?T(Details, [eoi], {fitting, send_eoi}),
+    riak_pipe_fitting:eoi(Details#fitting_details.output).
 
 add_worker(Partition, Pid, State) ->
     %% check if we're already monitoring this pid before setting up a
