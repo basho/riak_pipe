@@ -29,7 +29,6 @@
          validate_arg/1]).
 -export([partfun/1]).
 
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 -include("riak_pipe.hrl").
 
 -record(state, {accs, p, fd}).

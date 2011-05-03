@@ -26,7 +26,6 @@
          done/1,
          validate_arg/1]).
 
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 -include("riak_pipe.hrl").
 
 -record(state, {p, fd}).
