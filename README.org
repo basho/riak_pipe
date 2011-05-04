@@ -57,7 +57,7 @@ process will *block* until the input is added to its queue.
 
 The sizes of queues are limited, so if a worker is particularly slow,
 its queue will reach capacity and workers adding new inputs will block
-until the worker catches us.  This backpressure prevents processes and
+until the worker catches us.  This back pressure prevents processes and
 their mailboxes from growing unboundedly when workers outrun their
 followers.
 
@@ -91,9 +91,9 @@ input to the fitting process and distributing from there, in order to
 remove a bottleneck and reduce messaging.
 
 Blocking input-sending until the enqueueing process completes is used
-as a means of providing backpressure for workers that would otherwise
+as a means of providing back pressure for workers that would otherwise
 overwhelm their downstream partners.  When a queue is already at its
-limit, the acknowledgement of reception of the input will be withheld
+limit, the acknowledgment of reception of the input will be withheld
 until room has been made in the queue.  Because each vnode maintains
 only one worker per fitting, the total number of blocking workers (and
 thus the size of the waiting list) should never exceed the number of
@@ -199,7 +199,7 @@ the pipeline as a whole.  Currently supported options are:
  - sink :: =fitting()= | *=undefined=*
 
            Where the final fitting should send its messages.  Leave
-           this =undefined= to have the finall fitting send outputs as
+           this =undefined= to have the final fitting send outputs as
            messages to the process that called
            =riak_pipe:exec/2=.
 
@@ -249,7 +249,7 @@ riak_pipe_fitting:eoi(Head)
 
 This allows the fitting to begin shutting down its workers.  When all
 of a fitting's workers finish, the fitting will automatically forward
-the =eoi= (End Of Inputs) to the following fitting, and the finall
+the =eoi= (End Of Inputs) to the following fitting, and the final
 fitting will send its =eoi= to the sink.
 
 *** Receiving outputs
@@ -291,7 +291,7 @@ streamed, you can use the =riak_pipe:collect_results/1= function:
 {ok, Results, LogMessages} = riak_pipe:collect_results(Sink).
 #+END_SRC
 
-The =recieve_result/1= function is also exported from =riak_pipe= to
+The =receive_result/1= function is also exported from =riak_pipe= to
 make it easy to wait for the next piece of output:
 
 #+BEGIN_SRC erlang
@@ -419,13 +419,13 @@ processing, that state must also be moved.
 
 To allow =riak_pipe= to move a worker's state from one node to
 another, a behavior should export =archive/1= and =handoff/2=
-fucntions).
+functions).
 
 First, on the old node, the =archive/1= function will be called with
 the last state returned from =init/2= or =process/2=.  The function
 should return a tuple of the form ={ok, Archive}=, where =Archive= is
 any serializable term that represents the state needing to be
-transfered to the new node.  The worker process terminates soon after
+transferred to the new node.  The worker process terminates soon after
 =archive/1= completes.
 
 When the new vnode receives a handoff message from the old node, it
@@ -439,7 +439,7 @@ of the =State= variable, representing its merge with =Archive=.
 Processing then continues as normal.
 
 The =riak_pipe_w_reduce= module included with =riak_pipe= is a good
-example of how =archive/1= and =handoff/2= can be impelemented.
+example of how =archive/1= and =handoff/2= can be implemented.
 
 *** Optional: Logging and Tracing
 
@@ -522,7 +522,7 @@ previous evaluations (or the empty list, if the function has never
 been evaluated before).
 
 The input to the fitting must be of the form ={Key, Value}=.  Results
-are maintained (and the function is evaluted) per-key.
+are maintained (and the function is evaluated) per-key.
 
 When the behavior receives its "done" message, it emits the
 accumulated result for each key as an output of the form ={Key,
@@ -534,7 +534,7 @@ partitions for the same key, for example based on which node evaluates
 the partition function, downstream phases will see two results for
 that key (one from each reducer).  This can be useful in some cases
 (for instance two-stage reduce, where "follow" partitioning is used to
-reduce results locally, before an idential reduce with a consistent
+reduce results locally, before an identical reduce with a consistent
 partition function is used to reduce globally), but surprising in many
 others.
 
