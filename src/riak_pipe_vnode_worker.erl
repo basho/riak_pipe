@@ -18,6 +18,84 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Basic worker process implementation, to be parameterized with
+%%      fitting implementation module.
+%%
+%%      Modules that implement this behavior need to export at least
+%%      three functions:
+%%
+%% ```
+%% init(Partition :: ring_idx(),
+%%      FittingDetails :: #fitting_details{})
+%%   -> {ok, ModuleState :: term()}
+%% '''
+%%
+%%      The `init/2' function is called when the worker starts.  The
+%%      module should do whatever it needs to get ready before
+%%      processing inputs.  The module will probably also want to
+%%      store the `Parition' and `FittingDetails' arguments in its
+%%      state, as it will need them to send outputs later.  The
+%%      `ModuleState' returned from this function will be passed to
+%%      the `process/2' function later.
+%%
+%% ```
+%% process(Input :: term(),
+%%         ModuleState :: term())
+%%   -> {ok, NewModuleState :: term()}.
+%% '''
+%%
+%%      The `process/2' function is called once for each input
+%%      delivered to the worker.  The module should do whatever
+%%      processing is needed, sending outputs if appropriate.  The
+%%      `NewModuleState' returned from `process/2' will be passed back
+%%      in on the next input.
+%%
+%% ```
+%% done(ModuleState :: term()) -> ok.
+%% '''
+%%
+%%      The `done/1' function is called when all inputs have been
+%%      processed, and the end-of-inputs flag has been received from
+%%      the fitting.  The module should clean up any resources it
+%%      needs to clean up, and send any outputs it still needs to
+%%      send.  When `done/1' returns, the worker will terminate.
+%%
+%%      There are also three optional functions that a worker behavior
+%%      module can export:
+%%
+%% ```
+%% validate_arg(Arg :: term()) -> ok | {error, Reason :: iolist()}.
+%% '''
+%%
+%%      The `validate_arg/1' function is called before a pipeline is
+%%      constructed.  If the behavior module exports this function,
+%%      then it will be evaluated on the value of the `arg' field of a
+%%      `#fitting_spec{}' record that points to this module.  If the
+%%      argument is valid, this function should return the atom `ok'.
+%%      If the argument is invalid, the function should return an
+%%      error tuple, with the Reason being a printable iolist.
+%%
+%% ```
+%% archive(ModuleState :: term()) -> {ok, Archive :: term()}.
+%% '''
+%%
+%%      The `archive/1' function is called when the vnode that owns
+%%      this worker is being handed off to another node.  The worker
+%%      should produce some erlang term that represents its state.
+%%      This `Archive' term will be passed to the `handoff/2' function
+%%      of the module, by the worker running on the handoff target.
+%%
+%% ```
+%% handoff(Archive :: term(),
+%%         ModuleState :: term()) ->
+%%    {ok, NewModuleState :: term()}.
+%% '''
+%%
+%%      The `handoff/2' function is called when a vnode receives a
+%%      handoff archive from another vnode.  The module should "merge"
+%%      the `Archive' with its `ModuleState' (in whatever sense
+%%      "merge" may mean for this fitting), and return the resulting
+%%      `NewModuleState'.
 -module(riak_pipe_vnode_worker).
 
 -behaviour(gen_fsm).
@@ -45,8 +123,12 @@
 
 -include("riak_pipe.hrl").
 
--record(state, {details, vnode, modstate}).
+-record(state, {details :: #fitting_details{},
+                vnode :: pid(),
+                modstate :: term()}).
 
+%% @doc Get information about this behavior.
+-spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [{init,2},
      {process,2},
@@ -58,31 +140,53 @@ behaviour_info(_Other) ->
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Creates a gen_fsm process which calls Module:init/1 to
-%% initialize. To ensure a synchronized start-up procedure, this
-%% function does not return until Module:init/1 has returned.
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start a worker for the specified fitting+vnode.
+-spec start_link(ring_idx(), pid(), #fitting_details{}) ->
+         {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid, FittingDetails) ->
     gen_fsm:start_link(?MODULE, [Partition, VnodePid, FittingDetails], []).
 
+%% @doc Send input to the worker.  Note: this should only be called
+%%      by the vnode that owns the worker, as the result of the worker
+%%      asking for its next input.
+-spec send_input(pid(), term()) -> ok.
 send_input(WorkerPid, Input) ->
     gen_fsm:send_event(WorkerPid, {input, Input}).
 
+%% @doc Ask the worker to merge handoff data from an archived worker.
+%%      Note: this should only be called by the vnode that owns the
+%%      worker, as the result of the worker asking for its next input
+%%      when the vnode has received handoff data for the worker's
+%%      fitting.
+-spec send_handoff(pid(), Archive::term()) -> ok.
 send_handoff(WorkerPid, Handoff) ->
     gen_fsm:send_event(WorkerPid, {handoff, Handoff}).
 
+%% @doc Ask the worker to archive itself.  The worker will send the
+%%      archive data to the owning vnode when it has done so.  Once
+%%      it has sent the archive, the worker shuts down normally.
+-spec send_archive(pid()) -> ok.
 send_archive(WorkerPid) ->
     gen_fsm:send_event(WorkerPid, archive).
 
+%% @doc Send output from the given fitting to the next output down the
+%%      line. `FromPartition' is used in the case that the next
+%%      fitting's partition function is `follow'.
+-spec send_output(term(),
+                  ring_idx(),
+                  #fitting_details{}) ->
+         ok.
 send_output(Output, FromPartition,
             #fitting_details{output=Fitting}=Details) ->
     send_output(Output, FromPartition, Details, Fitting).
 
+%% @doc Send output from the given fitting to a specific fitting.
+%%      This is most often used to send output to the sink, but also
+%%      happens to be the internal implementation of {@link
+%%      send_output/3}.
+-spec send_output(term(), ring_idx(),
+                  #fitting_details{}, #fitting{}) ->
+         ok.
 send_output(Output, FromPartition,
             #fitting_details{name=Name}=_Details,
             FittingOverride) ->
@@ -101,19 +205,12 @@ send_output(Output, FromPartition,
 %%% gen_fsm callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm is started using gen_fsm:start/[3,4] or
-%% gen_fsm:start_link/[3,4], this function is called by the new
-%% process to initialize.
-%%
-%% @spec init(Args) -> {ok, StateName, State} |
-%%                     {ok, StateName, State, Timeout} |
-%%                     ignore |
-%%                     {stop, StopReason}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Initialize the worker.  This function calls the implementing
+%%      module's init function.  If that init function fails, the
+%%      worker stops with an `{init_failed, Type, Error}' reason.
+-spec init([ring_idx() | pid() | #fitting_details{}]) ->
+         {ok, initial_input_request, #state{}, 0}
+       | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
         {ok, ModState} = Module:init(Partition, FittingDetails),
@@ -126,27 +223,43 @@ init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
             {stop, {init_failed, Type, Error}}
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_event/2, the instance of this function with the same
-%% name as the current state name StateName is called to handle
-%% the event. It is also called if a timeout occurs.
-%%
-%% @spec state_name(Event, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
-%% state_name(_Event, State) ->
-%%     {next_state, state_name, State}.
+%% @doc The worker has just started, and should request its first
+%%      input from its owning vnode.  This is done after a zero
+%%      timeout instead of in the init function to get around the
+%%      deadlock that would result from having the worker wait for a
+%%      message from the vnode, which is waiting for a response from
+%%      this process.
+-spec initial_input_request(timeout, #state{}) ->
+         {next_state, wait_for_input, #state{}}.
 initial_input_request(timeout, State) ->
     request_input(State),
     {next_state, wait_for_input, State}.
 
+%% @doc The worker has requested its next input item, and is waiting
+%%      for it.
+%%
+%%      If the input is `done', due to end-of-inputs from the fitting,
+%%      then the implementing module's `done' function is evaluated,
+%%      the the worker terminates normally.
+%%
+%%      If the input is any regular input, then the implementing
+%%      module's `process' function is evaluated.  When it finishes,
+%%      the next input is requested from the vnode.
+%%
+%%      If the input is a handoff from another vnode, the worker asks
+%%      the implementing module to merge the archive, if the worker
+%%      exports that functionality.
+%%
+%%      If the input is a request to archive, the worker asks the
+%%      implementing module to archive itself, if the worker exports
+%%      that functionality.  When the archiving process has finished,
+%%      the worker terminates normally.
+-spec wait_for_input({input, done | term()}
+                    |{handoff, term()}
+                    |archive,
+                     #state{}) ->
+         {next_state, wait_for_input, #state{}}
+       | {stop, normal, #state{}}.
 wait_for_input({input, done}, State) ->
     ok = process_done(State),
     {stop, normal, State}; %%TODO: monitor
@@ -165,103 +278,33 @@ wait_for_input(archive, State) ->
     reply_archive(Archive, State),
     {stop, normal, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_event/[2,3], the instance of this function with
-%% the same name as the current state name StateName is called to
-%% handle the event.
-%%
-%% @spec state_name(Event, From, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
-%% state_name(_Event, _From, State) ->
-%%     Reply = ok,
-%%     {reply, Reply, state_name, State}.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_all_state_event/2, this function is called to handle
-%% the event.
-%%
-%% @spec handle_event(Event, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec handle_event(term(), atom(), #state{}) ->
+         {next_state, atom(), #state{}}.
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_all_state_event/[2,3], this function is called
-%% to handle the event.
-%%
-%% @spec handle_sync_event(Event, From, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec handle_sync_event(term(), term(), atom(), #state{}) ->
+         {reply, ok, atom(), #state{}}.
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it receives any
-%% message other than a synchronous or asynchronous event
-%% (or a system message).
-%%
-%% @spec handle_info(Info,StateName,State)->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec handle_info(term(), atom(), #state{}) ->
+         {next_state, atom(), #state{}}.
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_fsm terminates with
-%% Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, StateName, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec terminate(term(), atom(), #state{}) -> ok.
 terminate(_Reason, _StateName, _State) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, StateName, State, Extra) ->
-%%                   {ok, StateName, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec code_change(term(), atom(), #state{}, term()) ->
+         {ok, atom(), #state{}}.
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
@@ -269,18 +312,30 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+%% @doc Ask the vnode for this worker's next input.  The input will be
+%%      sent as an event later.
+-spec request_input(#state{}) -> ok.
 request_input(#state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:next_input(Vnode, Details#fitting_details.fitting).
 
+%% @doc Process an input - call the implementing module's `process/2'
+%%      function.
+-spec process_input(term(), #state{}) -> #state{}.
 process_input(Input, #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
     {ok, NewModState} = Module:process(Input, ModState),
     State#state{modstate=NewModState}.
 
+%% @doc Process a done (end-of-inputs) message - call the implementing
+%%      module's `done/1' function.
+-spec process_done(#state{}) -> ok.
 process_done(#state{details=FD, modstate=ModState}) ->
     Module = FD#fitting_details.module,
     Module:done(ModState).
 
+%% @doc Process a handoff message - call the implementing module's
+%%      `handoff/2' function, if exported.
+-spec handoff(term(), #state{}) -> #state{}.
 handoff(HandoffArchive, #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
     case lists:member({handoff, 2}, Module:module_info(exports)) of
@@ -292,6 +347,10 @@ handoff(HandoffArchive, #state{details=FD, modstate=ModState}=State) ->
             State
     end.
 
+%% @doc Process an archive request - call the implementing module's
+%%      `archive/1' fucntion, if exported.  The atom `undefined' is if
+%%      archive/1 is not exported.
+-spec archive(#state{}) -> term().
 archive(#state{details=FD, modstate=ModState}) ->
     Module = FD#fitting_details.module,
     case lists:member({archive, 1}, Module:module_info(exports)) of
@@ -303,6 +362,8 @@ archive(#state{details=FD, modstate=ModState}) ->
             undefined
     end.
 
+%% @doc Send the archive to the vnode after it has been generated.
+-spec reply_archive(term(), #state{}) -> ok.
 reply_archive(Archive, #state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:reply_archive(Vnode,
                                   Details#fitting_details.fitting,

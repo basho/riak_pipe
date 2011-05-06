@@ -18,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Start and stop handling of the =riak_pipe= application.
+
 -module(riak_pipe_app).
 
 -behaviour(application).
@@ -29,6 +31,16 @@
 %% Application callbacks
 %% ===================================================================
 
+%% @doc Start the `riak_pipe' application.
+%%
+%%      The `riak_core' application should already be started.  This
+%%      function will register the `riak_pipe_vnode' module to setup
+%%      the riak_pipe vnode master, and will also announce the
+%%      riak_pipe service to the node watcher.
+%%
+%%      If cluster_info has also been started, this function will
+%%      register the `riak_pipe_cinfo' module with it.
+-spec start(term(), term()) -> {ok, pid()} | {error, term()}.
 start(_StartType, _StartArgs) ->
     %% startup mostly copied from riak_kv
     catch cluster_info:register_app(riak_pipe_cinfo),
@@ -42,5 +54,7 @@ start(_StartType, _StartArgs) ->
             {error, Reason}
     end.
 
+%% @doc Unused.
+-spec stop(term()) -> ok.
 stop(_State) ->
     ok.

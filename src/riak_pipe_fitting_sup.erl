@@ -18,6 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Supervisor of fitting processes.
 -module(riak_pipe_fitting_sup).
 
 -behaviour(supervisor).
@@ -29,6 +30,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
 -define(SERVER, ?MODULE).
@@ -37,16 +39,16 @@
 %%% API functions
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Starts the supervisor
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the supervisor.  It will be registered under the atom
+%%      `riak_pipe_fitting_sup'.
+-spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+%% @doc Start a new fitting under this supervisor.
+-spec add_fitting(pid(), #fitting_spec{}, #fitting{},
+                  [riak_pipe:exec_option()]) ->
+         {ok, pid()}.
 add_fitting(Builder, Spec, Output, Options) ->
     ?DPF("Adding fitting for ~p", [Spec]),
     supervisor:start_child(?SERVER, [Builder, Spec, Output, Options]).
@@ -55,19 +57,12 @@ add_fitting(Builder, Spec, Output, Options) ->
 %%% Supervisor callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a supervisor is started using supervisor:start_link/[2,3],
-%% this function is called by the new process to find out about
-%% restart strategy, maximum restart frequency and child
-%% specifications.
-%%
-%% @spec init(Args) -> {ok, {SupFlags, [ChildSpec]}} |
-%%                     ignore |
-%%                     {error, Reason}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Initialize this supervisor.  This is a `simple_one_for_one',
+%%      whose child spec is for starting `riak_pipe_fitting' FSMs.
+-spec init([]) -> {ok, {{supervisor:strategy(),
+                         pos_integer(),
+                         pos_integer()},
+                        [ supervisor:child_spec() ]}}.
 init([]) ->
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,

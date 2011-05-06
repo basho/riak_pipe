@@ -18,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Supervisor for a vnode's worker processes.  One of these is
+%%      started per vnode.
 -module(riak_pipe_vnode_worker_sup).
 
 -behaviour(supervisor).
@@ -29,20 +31,20 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include("riak_pipe.hrl").
+
 %%%===================================================================
 %%% API functions
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Starts the supervisor
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the supervisor.
+-spec start_link(ring_idx(), pid()) ->
+         {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid) ->
     supervisor:start_link(?MODULE, [Partition, VnodePid]).
 
+%% @doc Start a new worker under the supervisor.
+-spec start_worker(pid(), #fitting_details{}) -> {ok, pid()}.
 start_worker(Supervisor, Details) ->
     supervisor:start_child(Supervisor, [Details]).
 
@@ -50,19 +52,14 @@ start_worker(Supervisor, Details) ->
 %%% Supervisor callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a supervisor is started using supervisor:start_link/[2,3],
-%% this function is called by the new process to find out about
-%% restart strategy, maximum restart frequency and child
-%% specifications.
-%%
-%% @spec init(Args) -> {ok, {SupFlags, [ChildSpec]}} |
-%%                     ignore |
-%%                     {error, Reason}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Initialize the supervisor.  This is a `simple_one_for_one',
+%%      whose child spec is for starting `riak_pipe_vnode_worker'
+%%      FSMs.
+-spec init([ring_idx() | pid()]) ->
+         {ok, {{supervisor:strategy(),
+                pos_integer(),
+                pos_integer()},
+               [ supervisor:child_spec() ]}}.
 init([Partition, VnodePid]) ->
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,

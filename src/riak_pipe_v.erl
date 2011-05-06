@@ -18,12 +18,21 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Helpers for validating inputs.
+
 -module(riak_pipe_v).
 
 -export([validate_module/2,
          validate_function/3,
          type_of/1]).
 
+%% @doc Validate that `Module' is an atom that names a loaded or
+%%      loadable module.  If a module is already loaded under that
+%%      name, or {@link code:load_file/1} is able to load one, the
+%%      atom `ok' is returned.  If no module is found, and `{error,
+%%      Reason}' tuple is returned.  (`Label' is used in the error
+%%      message).
+-spec validate_module(string(), term()) -> ok | {error, iolist()}.
 validate_module(Label, Module) when is_atom(Module) ->
     case code:is_loaded(Module) of
         {file, _} -> ok;
@@ -41,6 +50,22 @@ validate_module(Label, Module) ->
     {error, io_lib:format("~s must be an atom, not a ~p",
                           [Label, type_of(Module)])}.
 
+%% @doc Validate that `Fun' is a function of arity `Arity'.
+%%
+%%      If the function is of type `local' (anonymous functions, and
+%%      functions named via `fun Name/Arity'), validation completes
+%%      onces the arity is checked.
+%%
+%%      If the function is of type `external' (functions named via
+%%      `fun Module:Function/Arity'), then it is also verified that
+%%      the module is loaded or loadable (see {@link
+%%      validate_module/2}) and that it exports the named function.
+%%
+%%      If validation completes successfully, the atom `ok' is
+%%      returned.  If validation failes, an `{error, Reason}' tuple is
+%%      returned.  (`Label' is used in the error message).
+-spec validate_function(string(), integer(), fun()) ->
+         ok | {error, iolist()}.
 validate_function(Label, Arity, Fun) when is_function(Fun) ->
     Info = erlang:fun_info(Fun),
     case proplists:get_value(arity, Info) of
@@ -63,6 +88,9 @@ validate_function(Label, Arity, Fun) ->
     {error, io_lib:format("~s must be a function (arity ~b), not a ~p",
                           [Label, Arity, type_of(Fun)])}.
 
+%% @doc Validate an exported function.  See {@link validate_function/3}.
+-spec validate_exported_function(string(), integer(), atom(), atom()) ->
+         ok | {error, iolist()}.
 validate_exported_function(Label, Arity, Module, Function) ->
     case validate_module("", Module) of
         ok ->
@@ -80,6 +108,15 @@ validate_exported_function(Label, Arity, Module, Function) ->
                                   [Label, Error])}
     end.
 
+%% @doc Determine the type of a term.  For example:
+%% ```
+%% number = riak_pipe_v:type_of(1).
+%% atom = riak_pipe_v:type_of(a).
+%% pid = riak_pipe_v:type_of(self()).
+%% function = riak_pipe_v:type_of(fun() -> ok end).
+%% '''
+-spec type_of(term()) -> pid | reference | list | tuple | atom
+                       | number | binary | function.
 type_of(Term) ->
     case erl_types:t_from_term(Term) of
         {c,identifier,[Type|_],_} ->

@@ -18,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Supervisor for the `riak_pipe' application.
+
 -module(riak_pipe_sup).
 
 -behaviour(supervisor).
@@ -32,6 +34,9 @@
 %% API functions
 %% ===================================================================
 
+%% @doc Start the supervisor.  It will be registered under the atom
+%%      `riak_pipe_sup'.
+-spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
@@ -39,6 +44,23 @@ start_link() ->
 %% Supervisor callbacks
 %% ===================================================================
 
+%% @doc Initialize the supervisor, and start children.
+%%
+%%      Three children are started immediately:
+%%<ol><li>
+%%      The vnode master for riak_pipe vnodes (registered under
+%%      `riak_pipe_vnode_master').
+%%</li><li>
+%%      The pipe builder supervisor (registered under
+%%      `riak_pipe_builder_sup').
+%%</li><li>
+%%      The pipe fitting supervisor (registred under
+%%      `riak_pipe_fitting_sup').
+%%</li></ol>.
+-spec init([]) -> {ok, {{supervisor:strategy(),
+                         pos_integer(),
+                         pos_integer()},
+                        [ supervisor:child_spec() ]}}.
 init([]) ->
     VMaster = {riak_pipe_vnode_master,
                {riak_core_vnode_master, start_link, [riak_pipe_vnode]},

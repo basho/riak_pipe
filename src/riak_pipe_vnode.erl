@@ -18,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc The vnode, where the queues live.
+
 -module(riak_pipe_vnode).
 -behaviour(riak_core_vnode).
 
@@ -49,32 +51,54 @@
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
 
--record(state, {partition,
-                worker_sup,
-                workers,
-                worker_limit,
-                worker_q_limit,
-                workers_archiving,
-                handoff}).
+-record(worker, {pid :: pid(),
+                 fitting :: #fitting{},
+                 details :: #fitting_details{},
+                 state :: {working, term()} | waiting | init,
+                 inputs_done :: boolean(),
+                 q :: queue(),
+                 q_limit :: pos_integer(),
+                 blocking :: queue(),
+                 handoff :: undefined | {waiting, term()} }).
+-record(worker_handoff, {fitting :: #fitting{},
+                         queue :: queue(),
+                         blocking :: queue(),
+                         archive :: term()}).
+-record(handoff, {fold :: fun((Key::term(), Value::term(), Acc::term())
+                              -> NewAcc::term()),
+                  acc :: term(),
+                  sender :: sender()}).
 
--record(cmd_enqueue, {fitting, input}).
--record(cmd_eoi, {fitting}).
--record(cmd_next_input, {fitting}).
--record(cmd_archive, {fitting, archive}).
--record(cmd_status, {sender}).
+-record(state, {partition :: ring_idx(),
+                worker_sup :: pid(),
+                workers :: [#worker{}],
+                worker_limit :: pos_integer(),
+                worker_q_limit :: pos_integer(),
+                workers_archiving :: [#worker{}],
+                handoff :: undefined | starting | cancelled | finished
+                         | #handoff{}}).
 
--record(worker, {pid, fitting, details, state, inputs_done,
-                 q, q_limit, blocking, handoff}).
--record(worker_handoff, {fitting,
-                         queue,
-                         blocking,
-                         archive}).
--record(handoff, {fold, acc, sender}).
+-record(cmd_enqueue, {fitting :: #fitting{},
+                      input :: term()}).
+-record(cmd_eoi, {fitting :: #fitting{}}).
+-record(cmd_next_input, {fitting :: #fitting{}}).
+-record(cmd_archive, {fitting :: #fitting{},
+                      archive :: term()}).
+-record(cmd_status, {sender :: term()}).
 
 %% API
+
+%% @doc Start the vnode, if it isn't started already.
+-spec start_vnode(ring_idx()) -> {ok, pid()}.
 start_vnode(I) ->
     riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
 
+%% @doc Evaluate `Validator(Thing)'; return `Thing' if the evaluation
+%%      returns `true', or call {@link erlang:exit/1} if the
+%%      evaluation returns `false'. (`Msg' is used in the error reason
+%%      passed to exit/1.)
+-spec validate_or_exit(term(), fun((term) -> boolean()), string()) ->
+         term().
 validate_or_exit(Thing, Validator, Msg) ->
     case Validator(Thing) of
         true -> Thing;
@@ -83,6 +107,23 @@ validate_or_exit(Thing, Validator, Msg) ->
             exit({invalid_config, {Msg, Thing}})
     end.
 
+%% @doc Initialize the vnode.  This function validates the limits set
+%%      in the application environment, and starts the worker
+%%      supervisor.
+%%
+%%      Two application environment variables matter to the vnode:
+%%<dl><dt>
+%%      `worker_limit'
+%%</dt><dd>
+%%      Positive integer, default 50. The maximum number of workers
+%%      allowed to operate on this vnode.
+%%</dd><dt>
+%%      `worker_queue_limit'
+%%</dt><dd>
+%%      Positive integer, default 64. The maximum length of each
+%%      worker's input queue.
+%%</dd></dl>
+-spec init([ring_idx()]) -> {ok, #state{}}.
 init([Partition]) ->
     WL = validate_or_exit(app_helper:get_env(riak_pipe, worker_limit,
                                              ?DEFAULT_WORKER_LIMIT),
@@ -104,10 +145,21 @@ init([Partition]) ->
        workers_archiving=[]
       }}.
 
+%% @doc Get a ring partition index for any local vnode.  Used to
+%%      semi-randomly choose a local vnode if the spec for the head
+%%      fitting of a pipeline uses a partition-choice function of
+%%      `follow'.
+-spec any_local_vnode() -> ring_idx().
 any_local_vnode() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     hd(riak_core_ring:my_indices(Ring)).
 
+%% @doc Queue the given `Input' for processing by the `Fitting'.  This
+%%      function handles getting the input to the correct vnode by
+%%      evaluating the fitting's partition-choice function (`partfun')
+%%      on the input.
+-spec queue_work(#fitting{}, term()) ->
+         ok | {error, worker_limit_reached | worker_startup_failed}.
 queue_work(#fitting{partfun=follow}=Fitting, Input) ->
     %% this should only happen if someone sets up a pipe with
     %% the first fitting as partfun=follow
@@ -115,6 +167,13 @@ queue_work(#fitting{partfun=follow}=Fitting, Input) ->
 queue_work(#fitting{partfun=PartFun}=Fitting, Input) ->
     queue_work(Fitting, Input, PartFun(Input)).
 
+%% @doc Queue the given `Input' for processing the the `Fitting' on
+%%      the vnode specified by `PartitionOverride'.  This version of
+%%      the function is used to support the `follow' partfun, by
+%%      allowing a worker to send the input directly to the vnode it
+%%      works for.
+-spec queue_work(#fitting{}, term(), ring_idx()) ->
+         ok | {error, worker_limit_reached | worker_startup_failed}.
 queue_work(Fitting, Input, PartitionOverride) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(Ring, PartitionOverride),
@@ -127,16 +186,69 @@ queue_work(Fitting, Input, PartitionOverride) ->
     %% block until input confirmed queued, for backpressure
     receive {ReplyRef, Reply} -> Reply end.
 
+%% @doc Send end-of-inputs for a fitting to a vnode.  Note: this
+%%      should only be called by `riak_pipe_fitting' processes.  This
+%%      will cause the vnode to shutdown the worker, dispose of the
+%%      queue, and send a `done' to the fitting, once the queue is
+%%      emptied.
+-spec eoi(pid(), #fitting{}) -> ok.
 eoi(Pid, Fitting) ->
     riak_core_vnode:send_command(Pid, #cmd_eoi{fitting=Fitting}).
 
+%% @doc Request the next input from the queue for the given fitting
+%%      from a vnode.  Note: this should only be called by the worker
+%%      process for that fitting-vnode pair.  This will cause the
+%%      vnode to send the next input to the worker process for this
+%%      fitting.
+-spec next_input(pid(), #fitting{}) -> ok.
 next_input(Pid, Fitting) ->
     riak_core_vnode:send_command(Pid, #cmd_next_input{fitting=Fitting}).
 
+%% @doc Send the result of archiving a worker to the vnode that owns
+%%      that worker.  Note: this should only be called by the worker
+%%      being archived.  This will cause the vnode to send that
+%%      worker's queue and archive to its handoff partner when
+%%      instructed to do so.
+-spec reply_archive(pid(), #fitting{}, term()) -> ok.
 reply_archive(Pid, Fitting, Archive) ->
     riak_core_vnode:send_command(Pid, #cmd_archive{fitting=Fitting,
                                                    archive=Archive}).
 
+%% @doc Get some information about the worker queues on this vnode.
+%%      The result is a tuple of the form `{PartitionNumber,
+%%      [WorkerProplist]}'.  Each WorkerProplist contains tagged
+%%      tuples, such as:
+%%<dl><dt>
+%%      `fitting'
+%%</dt><dd>
+%%      The pid of the fitting the worker implements.
+%%</dd><dt>
+%%      `name'
+%%</dt><dd>
+%%      The name of the fitting.
+%%</dd><dt>
+%%      `module'
+%%</dt><dd>
+%%      The module that implements the fitting.
+%%</dd><dt>
+%%      `state'
+%%</dt><dd>
+%%      The state of the worker.  One of `working', `waiting', `init'.
+%%</dd><dt>
+%%      `inputs_done'
+%%</dt><dd>
+%%      Boolean: true if `eoi' has been delivered for this fitting,
+%%      false otherwise.
+%%</dd><dt>
+%%      `queue_length'
+%%</dt><dd>
+%%      Integer number of items in the worker's queue.
+%%</dd><dt>
+%%      `blocking_lenght'
+%%</dt><dd>
+%%      Integer number of requests blocking on the queue.
+%%</dd></dl>
+-spec status(pid()) -> {ring_idx(), [[{atom(), term()}]]}.
 status(Pid) ->
     Ref = make_ref(),
     riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()}}),
@@ -144,7 +256,10 @@ status(Pid) ->
         {Ref, Reply} -> Reply
     end.
 
-% Sample command: respond to a ping
+%% @doc Handle a vnode command.
+-spec handle_command(term(), sender(), #state{}) ->
+          {reply, term(), #state{}}
+        | {noreply, #state{}}.
 handle_command(ping, _Sender, State) ->
     {reply, {pong, State#state.partition}, State};
 handle_command(#cmd_enqueue{}=Cmd, Sender, State) ->
@@ -160,6 +275,11 @@ handle_command(Message, _Sender, State) ->
                           [?MODULE, ?LINE, Message]),
     {noreply, State}.
 
+%% @doc Handle a handoff command.
+-spec handle_handoff_command(term(), sender(), #state{}) ->
+         {reply, term(), #state{}}
+       | {noreply, #state{}}
+       | {forward, #state{}}.
 handle_handoff_command(?FOLD_REQ{}=Cmd, Sender, State) ->
     handoff_cmd_internal(Cmd, Sender, State);
 handle_handoff_command(#cmd_archive{}=Cmd, _Sender, State) ->
@@ -191,18 +311,32 @@ handle_handoff_command(Cmd, Sender, State) ->
     %% handle the rest (#cmd_status, Unknown) as usual
     handle_command(Cmd, Sender, State).
 
+%% @doc Be prepared to handoff.
+-spec handoff_starting(node(), #state{}) -> {true, #state{}}.
 handoff_starting(_TargetNode, State) ->
     {true, State#state{handoff=starting}}.
 
+%% @doc Stop handing off before getting started.
+-spec handoff_cancelled(#state{}) -> {ok, #state{}}.
 handoff_cancelled(#state{handoff=starting, workers_archiving=[]}=State) ->
     %%TODO: handoff is only cancelled before anything is handed off, right?
     {ok, State#state{handoff=cancelled}}.
 
+%% @doc Note that handoff has completed.
+-spec handoff_finished(node(), #state{}) -> {ok, #state{}}.
 handoff_finished(_TargetNode, #state{workers=[]}=State) ->
     %% #state.workers should be empty, because they were all handed off
     %% clear out list of handed off items
     {ok, State#state{handoff=finished}}.
 
+%% @doc Accept handoff data from some other node.  `Data' should be a
+%%      term_to_binary-ed `#worker_handoff{}' record.  See {@link
+%%      encode_handoff_item/1}.
+%%
+%%      Ensure that a worker is running for the fitting, merge queues,
+%%      and prepare to handle archive transfer.
+-spec handle_handoff_data(binary(), #state{}) ->
+         {reply, ok | {error, term()}, #state{}}.
 handle_handoff_data(Data, State) ->
     #worker_handoff{fitting=Fitting,
                     queue=Queue,
@@ -216,22 +350,43 @@ handle_handoff_data(Data, State) ->
             {reply, {error, Error}, State}
     end.
 
+%% @doc Produce a binary representing the worker data to handoff.
+-spec encode_handoff_item(#fitting{}, {queue(), queue(), term()}) ->
+         binary().
 encode_handoff_item(Fitting, {Queue, Blocking, Archive}) ->
     term_to_binary(#worker_handoff{fitting=Fitting,
                                    queue=Queue,
                                    blocking=Blocking,
                                    archive=Archive}).
 
+%% @doc Determine whether this vnode has any running workers.
+-spec is_empty(#state{}) -> {boolean(), #state{}}.
 is_empty(#state{workers=Workers}=State) ->
     {Workers==[], State}.
 
+%% @doc Unused.
+-spec delete(#state{}) -> {ok, #state{}}.
 delete(#state{workers=[]}=State) ->
     %%TODO: delete is only called if is_empty/1==true, right?
     {ok, State}.
 
+%% @doc Unused.
+-spec terminate(term(), #state{}) -> ok.
 terminate(_Reason, _State) ->
     ok.
 
+%% @doc Handle an 'EXIT' message from a linked process.
+%%
+%%      If the linked process was a worker that died normally after
+%%      receiving end-of-inputs and emptying its queue, send `done' to
+%%      the fitting, and remove the worker's entry in the vnodes list.
+%%
+%%      If the linked process was a worker that died abnormally,
+%%      attempt to restart it.
+%%
+%%      If the linked process was a fitting, kill the worker associated
+%%      with that fitting and dispose of its queue.
+-spec handle_exit(pid(), term(), #state{}) -> {noreply, #state{}}.
 handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
     NewState = case worker_by_pid(Pid, State) of
                    {ok, Worker} ->
@@ -267,6 +422,19 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
 
 %% internal
 
+%% @doc Handle a command to add an input to the work queue.  This
+%%      function ensures there is a worker running for the fitting (if
+%%      there is room within `worker_limit').  It then adds the input
+%%      to the queue and replies `ok' if the queue is below capacity
+%%      (`worker_queue_limit').  If the queue is at capacity, the
+%%      request is added to the blocking queue, and no reponse is sent
+%%      (until later, when the input is moved from the blocking queue
+%%      to the work queue).
+-spec enqueue_internal(#cmd_enqueue{}, sender(), #state{}) ->
+         {reply,
+          ok | {error, worker_limit_reached | worker_startup_failed},
+          #state{}}
+       | {noreply, #state{}}.
 enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input},
                  Sender, #state{partition=Partition}=State) ->
     case worker_for(Fitting, State) of
@@ -291,6 +459,11 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input},
             {reply, {error, worker_startup_failed}, State}
     end.
 
+%% @doc Find the worker for the given `Fitting', or start one if there
+%%      is room on this vnode.  Returns `{ok, Worker}' if a worker
+%%      [now] exists, or `worker_limit_reached' otherwise.
+-spec worker_for(#fitting{}, #state{}) ->
+         {ok, #worker{}} | worker_limit_reached | worker_startup_failed.
 worker_for(Fitting, #state{workers=Workers, worker_limit=Limit}=State) ->
     case worker_by_fitting(Fitting, State) of
         {ok, Worker} ->
@@ -304,6 +477,13 @@ worker_for(Fitting, #state{workers=Workers, worker_limit=Limit}=State) ->
             end
     end.
 
+%% @doc Start a new worker for the given `Fitting'.  This function
+%%      requests the details from the fitting process, links to the
+%%      fitting process (TODO: as soon as vnodes can receive 'DOWN',
+%%      use links), starts and links the worker process, and sets up
+%%      the queues for it.
+-spec new_worker(#fitting{}, #state{}) ->
+         {ok, #worker{}} | worker_startup_failed.
 new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
     try
         %% TODO: would prefer to :monitor here instead of :link, but
@@ -337,6 +517,11 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
             worker_startup_failed
     end.
 
+%% @doc Add an input to the worker's queue.  If the worker is
+%%      `waiting', send the input to it, skipping the queue.  If the
+%%      queue is full, add the request to the blocking queue instead.
+-spec add_input(#worker{}, term(), sender()) ->
+         {ok | queue_full, #worker{}}.
 add_input(#worker{state=waiting}=Worker, Input, _Sender) ->
     %% worker has been waiting for something to enter its queue
     send_input(Worker, Input),
@@ -350,6 +535,10 @@ add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker, Input, Sender) ->
             {queue_full, Worker#worker{blocking=NewBlocking}}
     end.
 
+%% @doc Merge the worker on this vnode with the worker from another
+%%      vnode.  (The grungy part of {@link, handle_handoff_data/2}.)
+-spec handoff_worker(#worker{}, queue(), queue(), Archive::term()) ->
+          #worker{}.
 handoff_worker(#worker{q=Q, blocking=Blocking}=Worker,
                HandoffQ, HandoffBlocking, HandoffState) ->
     %% simply concatenate queues, and hold the handoff state for
@@ -360,6 +549,10 @@ handoff_worker(#worker{q=Q, blocking=Blocking}=Worker,
                      handoff={waiting, HandoffState}},
     maybe_wake_for_handoff(MergedWorker).
 
+%% @doc If the worker is `waiting', send it the handoff data to
+%%      process.  Otherwise, just leave it be until it asks for the
+%%      next input.
+-spec maybe_wake_for_handoff(#worker{}) -> #worker{}.
 maybe_wake_for_handoff(#worker{state=waiting}=Worker) ->
     send_handoff(Worker),
     Worker#worker{state={working, handoff}, handoff=undefined};
@@ -367,6 +560,11 @@ maybe_wake_for_handoff(Worker) ->
     %% worker is doing something else - send handoff later
     Worker.
 
+%% @doc Handle an end-of-inputs command.  If the worker for the given
+%%      fitting is `waiting', ask it to shutdown immediately.
+%%      Otherwise, mark that eoi was received, and ask the worker to
+%%      shut down when it empties its queue.
+-spec eoi_internal(#cmd_eoi{}, #state{}) -> {noreply, #state{}}.
 eoi_internal(#cmd_eoi{fitting=Fitting}, #state{partition=Partition}=State) ->
     NewState = case worker_by_fitting(Fitting, State) of
                    {ok, Worker} ->
@@ -393,6 +591,13 @@ eoi_internal(#cmd_eoi{fitting=Fitting}, #state{partition=Partition}=State) ->
                end,
     {noreply, NewState}.
 
+%% @doc Handle a request from a worker for its next input.
+%%
+%%      If this vnode is handing data off, ask the worker to archive.
+%%
+%%      If this vnode is not handing off, send the next input.
+-spec next_input_internal(#cmd_next_input{}, #state{}) ->
+          {noreply, #state{}}.
 next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
     case worker_by_fitting(Fitting, State) of
         {ok, #worker{handoff=undefined}=Worker} ->
@@ -404,6 +609,18 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
             {noreply, replace_worker(HandoffWorker, State)}
     end.
 
+%% @doc Handle pulling data off of a worker's queue and sending it to
+%%      the worker.
+%%
+%%      If there are no inputs in the worker's queue, mark the worker
+%%      as `waiting' if it has not yet received its end-of-inputs
+%%      message, or ask it to shutdown if eoi was received.
+%%
+%%      If there are inputs in the queue, pull off the front one and
+%%      send it along.  If there are items in the blocking queue, move
+%%      the front one to the end of the work queue, and reply `ok' to
+%%      the process that requested its addition (unblocking it).
+-spec next_input_nohandoff(#worker{}, #state{}) -> {noreply, #state{}}.
 next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
     case queue:out(Worker#worker.q) of
         {{value, Input}, NewQ} ->
@@ -445,41 +662,65 @@ next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
             {noreply, replace_worker(EmptyWorker, State)}
     end.
 
+%% @doc Send an input to a worker.
+-spec send_input(#worker{}, term()) -> ok.
 send_input(Worker, Input) ->
     riak_pipe_vnode_worker:send_input(Worker#worker.pid, Input).
 
+%% @doc Send an request to archive to a worker.
+-spec send_archive(#worker{}) -> ok.
 send_archive(Worker) ->
     riak_pipe_vnode_worker:send_archive(Worker#worker.pid).
 
+%% @doc Send a request to merge another node's archived worker state
+%%      with this worker.
+-spec send_handoff(#worker{}) -> ok.
 send_handoff(#worker{handoff={waiting, HO}}=Worker) ->
     riak_pipe_vnode_worker:send_handoff(Worker#worker.pid, HO).
 
+%% @doc Find a worker by its pid.
+-spec worker_by_pid(pid(), #state{}) -> {ok, #worker{}} | none.
 worker_by_pid(Pid, #state{workers=Workers}) ->
     case lists:keyfind(Pid, #worker.pid, Workers) of
         #worker{}=Worker -> {ok, Worker};
         false            -> none
     end.
-            
+
+%% @doc Find a worker by the fitting it works for.
+-spec worker_by_fitting(#fitting{}, #state{}) -> {ok, #worker{}} | none.
 worker_by_fitting(Fitting, #state{workers=Workers}) ->
     case lists:keyfind(Fitting, #worker.fitting, Workers) of
         #worker{}=Worker -> {ok, Worker};
         false            -> none
     end.
 
+%% @doc Find a worker by the pid of the fitting it works for.
+-spec worker_by_fitting_pid(pid(), #state{}) -> {ok, #worker{}} | none.
 worker_by_fitting_pid(Pid, #state{workers=Workers}) ->
     case [ W || #worker{fitting=F}=W <- Workers, F#fitting.pid =:= Pid ] of
         [#worker{}=Worker] -> {ok, Worker};
         []                 -> none
     end.
 
+%% @doc Update the worker's entry in the vnode's state.  Matching
+%%      is done by fitting.
+-spec replace_worker(#worker{}, #state{}) -> #state{}.
 replace_worker(#worker{fitting=F}=Worker, #state{workers=Workers}=State) ->
     NewWorkers = lists:keystore(F, #worker.fitting, Workers, Worker),
     State#state{workers=NewWorkers}.
 
+%% @doc Remove the worker's entry from the vnode's state.  Matching is
+%%      done by fitting.
+-spec remove_worker(#worker{}, #state{}) -> #state{}.
 remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
     NewWorkers = lists:keydelete(F, #worker.fitting, Workers),
     State#state{workers=NewWorkers}.
 
+%% @doc Restart the worker after failure.  The input that the worker
+%%      was processing is skipped.  If the worker fails to restart,
+%%      the inputs in its work queue are sent to the fitting process,
+%%      and the requests in its block queue are sent `fail' responses.
+-spec restart_worker(#worker{}, #state{}) -> #state{}.
 restart_worker(Worker, State) ->
     CleanState = remove_worker(Worker, State),
     case new_worker(Worker#worker.fitting, CleanState) of
@@ -499,12 +740,20 @@ restart_worker(Worker, State) ->
             CleanState
     end.
 
+%% @doc Reply to a request that has been waiting in a worker's blocked
+%%      queue.
+-spec reply_to_blocker(term(), term()) -> true.
 reply_to_blocker(Blocker, Reply) ->
     riak_core_vnode:reply(Blocker, Reply).
 
+%% @doc Send a `done' message to the fitting specified.
+-spec send_done(#fitting{}) -> ok.
 send_done(Fitting) ->
     riak_pipe_fitting:worker_done(Fitting).
 
+%% @doc Handle a request for status.  Generate the worker detail
+%%      list, and send it to the requester.
+-spec status_internal(#cmd_status{}, #state{}) -> {noreply, #state{}}.
 status_internal(#cmd_status{sender=Sender},
                 #state{partition=P, workers=Workers}=State) ->
     Reply = {P, [ worker_detail(W) || W <- Workers ]},
@@ -512,6 +761,8 @@ status_internal(#cmd_status{sender=Sender},
     riak_core_vnode:reply(Sender, Reply),
     {noreply, State}.
 
+%% @doc Generate the status details for the given worker.
+-spec worker_detail(#worker{}) -> [{atom(), term()}].
 worker_detail(#worker{fitting=Fitting, details=Details,
                       state=State, inputs_done=Done,
                       q=Q, blocking=B}) ->
@@ -526,6 +777,11 @@ worker_detail(#worker{fitting=Fitting, details=Details,
      {queue_length, queue:len(Q)},
      {blocking_lenght, queue:len(B)}].
 
+%% @doc Handle the fold request to start handoff.  Immediately ask all
+%%      `waiting' workers to archive, and note that others should
+%%      archive as they finish their current inputs.
+-spec handoff_cmd_internal(term(), sender(), #state{}) ->
+         {noreply, #state{}}.
 handoff_cmd_internal(?FOLD_REQ{foldfun=Fold, acc0=Acc}, Sender,
               #state{workers=Workers}=State) ->
     {Ready, NotReady} = lists:partition(
@@ -541,6 +797,10 @@ handoff_cmd_internal(?FOLD_REQ{foldfun=Fold, acc0=Acc}, Sender,
                                            acc=Acc,
                                            sender=Sender}}}.
 
+%% @doc The vnode is in handoff, and a worker requested its next
+%%      input.  Instead of giving it the next input, ask it to
+%%      archive, so it can be sent to the handoff partner.
+-spec archive_fitting(#fitting{}, #state{}) -> #state{}.
 archive_fitting(F, State) ->
     {ok, W} = worker_by_fitting(F, State),
     send_archive(W),
@@ -548,6 +808,13 @@ archive_fitting(F, State) ->
                 workers_archiving=[W#worker{state={working, archive}}
                                    |State#state.workers_archiving]}.
 
+%% @doc A worker finished archiving, and sent the archive back to the
+%%      vnode.  Evaluate the handoff fold function, and remove the
+%%      worker from the vnode's state.
+%%
+%%      If there are no more workers to archive, reply to the handoff
+%%      requester with the accumulated result.
+-spec archive_internal(#cmd_archive{}, #state{}) -> {noreply, #state{}}.
 archive_internal(#cmd_archive{fitting=F, archive=A},
                  #state{handoff=Handoff,
                         workers=Workers,

@@ -18,6 +18,11 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Supervisor for the pipe builder processes.
+%%
+%%      This supervisor is mostly convenience for later investigation,
+%%      to learn how many pipelines are active.  No restart strategy
+%%      is used.
 -module(riak_pipe_builder_sup).
 
 -behaviour(supervisor).
@@ -30,26 +35,32 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include("riak_pipe.hrl").
+
 -define(SERVER, ?MODULE).
 
 %%%===================================================================
 %%% API functions
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Starts the supervisor
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the supervisor.  It will be registered under the atom
+%%      `riak_pipe_builder_sup'.
+-spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-
+%% @doc Start a new pipeline builder.  Starts the builder process
+%%      under this supervisor.
+-spec new_pipeline([#fitting_spec{}], [riak_pipe:exec_option()]) ->
+         {ok, pid()}.
 new_pipeline(Spec, Options) ->
     supervisor:start_child(?MODULE, [Spec, Options]).
 
+%% @doc Get information about the builders supervised here.
+-spec builder_pids() -> [{term(),
+                          supervisor:child_id(),
+                          supervisor:worker(),
+                          supervisor:modules()}].
 builder_pids() ->
     supervisor:which_children(?SERVER).
 
@@ -57,19 +68,12 @@ builder_pids() ->
 %%% Supervisor callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a supervisor is started using supervisor:start_link/[2,3],
-%% this function is called by the new process to find out about
-%% restart strategy, maximum restart frequency and child
-%% specifications.
-%%
-%% @spec init(Args) -> {ok, {SupFlags, [ChildSpec]}} |
-%%                     ignore |
-%%                     {error, Reason}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Initialize this supervisor.  This is a `simple_one_for_one',
+%%      whose child spec is for starting `riak_pipe_builder' FSMs.
+-spec init([]) -> {ok, {{supervisor:strategy(),
+                         pos_integer(),
+                         pos_integer()},
+                        [ supervisor:child_spec() ]}}.
 init([]) ->
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,

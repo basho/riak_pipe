@@ -18,6 +18,9 @@
 %%
 %%--------------------------------------------------------------------
 
+%% @doc The process that hold the details for the fitting.  This
+%%      process also manages the end-of-inputs synchronization for
+%%      this stage of the pipeline.
 -module(riak_pipe_fitting).
 
 -behaviour(gen_fsm).
@@ -45,30 +48,42 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
--record(state, {builder, details, workers}).
--record(worker, {partition, pid, monitor}).
+-record(worker, {partition :: ring_idx(),
+                 pid :: pid(),
+                 monitor :: reference()}).
+-record(state, {builder :: pid(),
+                details :: #fitting_details{},
+                workers :: [#worker{}]}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Creates a gen_fsm process which calls Module:init/1 to
-%% initialize. To ensure a synchronized start-up procedure, this
-%% function does not return until Module:init/1 has returned.
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the fitting, according to the `Spec' given.  The fitting
+%%      will register with `Builder' and will request its outputs to
+%%      be processed under the `Output' fitting.
+-spec start_link(pid(), #fitting_spec{}, #fitting{},
+                 [riak_pipe:exec_option()]) ->
+         {ok, pid()} | ignore | {error, term()}.
 start_link(Builder, Spec, Output, Options) ->
     gen_fsm:start_link(?MODULE, [Builder, Spec, Output, Options], []).
 
+%% @doc Send an end-of-inputs message to the specified fitting
+%%      process (possibly the sink).
+-spec eoi(#fitting{}) -> ok.
 eoi(#fitting{partfun=sink}=Sink) ->
     riak_pipe:eoi(Sink);
 eoi(#fitting{pid=Pid}) ->
     gen_fsm:send_event(Pid, eoi).
 
+%% @doc Request the details about this fitting.  The ring parition
+%%      index of the vnode requesting the details is included such
+%%      that the fitting can inform the vnode of end-of-inputs later.
+%%      This function assumes that it is being called from the vnode
+%%      process, so the `self()' can be used to give the fitting
+%%      a pid to monitor.
+-spec get_details(#fitting{}, ring_idx()) ->
+         {ok, #fitting_details{}} | gone.
 get_details(Fitting, Partition) ->
     try
         gen_fsm:sync_send_event(Fitting#fitting.pid,
@@ -77,9 +92,17 @@ get_details(Fitting, Partition) ->
             gone
     end.
 
+%% @doc Tell the fitting that this worker is done.  This function
+%%      assumes that it is being called from the vnode process, so
+%%      that `self()' can be used to inform the fitting of which
+%%      worker is done.
+-spec worker_done(#fitting{}) -> ok.
 worker_done(Fitting) ->
     gen_fsm:sync_send_event(Fitting#fitting.pid, {done, self()}).
 
+%% @doc Get the list of ring partition indexes (vnodes) that are doing
+%%      work for this fitting.
+-spec workers(pid()) -> {ok, [ring_idx()]} | gone.
 workers(Fitting) ->
     try 
         {ok, gen_fsm:sync_send_all_state_event(Fitting, workers)}
@@ -91,19 +114,13 @@ workers(Fitting) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm is started using gen_fsm:start/[3,4] or
-%% gen_fsm:start_link/[3,4], this function is called by the new
-%% process to initialize.
-%%
-%% @spec init(Args) -> {ok, StateName, State} |
-%%                     {ok, StateName, State, Timeout} |
-%%                     ignore |
-%%                     {stop, StopReason}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Initialize the fitting process.  This function links to the
+%%      builder process, so it will tear down if the builder exits
+%%      abnormally (which happens if another fitting exist
+%%      abnormally).
+-spec init([pid() | #fitting_spec{} | #fitting{}
+            | [riak_pipe:exec_option()]]) ->
+         {ok, wait_upstream_eoi, #state{}}.
 init([Builder,
       #fitting_spec{name=Name, module=Module, arg=Arg, partfun=PartFun},
       Output,
@@ -131,21 +148,16 @@ init([Builder,
     {ok, wait_upstream_eoi,
      #state{builder=Builder, details=Details, workers=[]}}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_event/2, the instance of this function with the same
-%% name as the current state name StateName is called to handle
-%% the event. It is also called if a timeout occurs.
+%% @doc The fitting is just hanging out, serving details and waiting
+%%      for end-of-inputs.
 %%
-%% @spec state_name(Event, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%%      When it gets eoi, it forwards the signal to its workers, and
+%%      then begins waiting for them to respond done.  If it has no
+%%      workers when it receives end-of-inputs, the fitting stops
+%%      immediately.
+-spec wait_upstream_eoi(eoi, #state{}) ->
+         {stop, normal, #state{}}
+       | {next_state, wait_workers_done, #state{}}.
 wait_upstream_eoi(eoi, #state{workers=[], details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
     %% no workers to stop
@@ -157,24 +169,22 @@ wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
       || #worker{pid=Pid} <- Workers ],
     {next_state, wait_workers_done, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_event/[2,3], the instance of this function with
-%% the same name as the current state name StateName is called to
-%% handle the event.
+
+%% @doc The fitting is just hanging out, serving details and waiting
+%%      for end-of-inputs.
 %%
-%% @spec state_name(Event, From, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%%      When it gets a request for the fitting's details, it sets up
+%%      a monitor for the working vnode, and responds with details.
+%%
+%%      The fitting may receive a `done' message from a vnode before
+%%      eoi has been sent, if handoff causes the worker to relocate.
+%%      In this case, the fitting simply demonitors the vnode, and
+%%      removes it from its worker list.
+-spec wait_upstream_eoi({get_details, ring_idx(), pid()},
+                        term(), #state{}) ->
+         {reply, {ok, #fitting_details{}}, wait_upstream_eoi, #state{}};
+                       ({done, pid()}, term(), #state{}) ->
+         {reply, ok, wait_upstream_eoi, #state{}}.
 wait_upstream_eoi({get_details, Partition, Pid}=M, _From, State) ->
     ?T(State#state.details, [get_details], {fitting, M}),
     NewState = add_worker(Partition, Pid, State),
@@ -194,7 +204,25 @@ wait_upstream_eoi({done, Pid}=M, _From, State) ->
     %% don't check for empty Rest like in wait_workers_done, though
     %% because we haven't seen eoi yet
     {reply, ok, wait_upstream_eoi, State#state{workers=Rest}}.
-        
+
+%% @doc The fitting has forwarded the end-of-inputs signal to all of
+%%      the vnodes working for it, and is waiting for done responses.
+%%
+%%      When the fitting receives a done response, it demonitors the
+%%      vnode that sent it, and removes it from its worker list.
+%%      If there are no more responses to wait for, the fitting
+%%      forwards the end-of-inputs signal to the fitting that follows,
+%%      and then shuts down normally.
+%%
+%%      If the fitting receives a request for details from a vnode
+%%      while in this state, it responds with the detail as usual,
+%%      but also immediately sends end-of-inputs to that vnode.
+-spec wait_workers_done({get_details, ring_idx(), pid()},
+                        term(), #state{}) ->
+         {reply, {ok, #fitting_details{}}, wait_workers_done, #state{}};
+                       ({done, pid()}, term(), #state{}) ->
+         {reply, ok, wait_workers_done, #state{}}
+       | {stop, normal, ok, #state{}}.
 wait_workers_done({get_details, Partition, Pid}=M, _From, State) ->
     %% handoff caused a late get_details
     ?T(State#state.details, [get_details], {late_fitting, M}),
@@ -223,38 +251,18 @@ wait_workers_done({done, Pid}=M, _From, State) ->
             {reply, ok, wait_workers_done, State#state{workers=Rest}}
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_all_state_event/2, this function is called to handle
-%% the event.
-%%
-%% @spec handle_event(Event, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec handle_event(term(), atom(), #state{}) ->
+         {next_state, atom(), #state{}}.
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_all_state_event/[2,3], this function is called
-%% to handle the event.
-%%
-%% @spec handle_sync_event(Event, From, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc The only sync event handled in all states is `workers', which
+%%      retrieves a list of ring partition indexes that have requested
+%%      this fittings details (i.e. that are doing work for this
+%%      fitting).
+-spec handle_sync_event(workers, term(), atom(), #state{}) ->
+         {reply, [ring_idx()], atom(), #state{}}.
 handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     Partitions = [ P || #worker{partition=P} <- Workers ],
     {reply, Partitions, StateName, State};
@@ -262,19 +270,27 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it receives any
-%% message other than a synchronous or asynchronous event
-%% (or a system message).
+%% @doc The non-gen_fsm messages that this process expects are 'DOWN'
+%%      and 'EXIT'.
 %%
-%% @spec handle_info(Info,StateName,State)->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%%      'DOWN' messages are received when monitored vnodes exit.  In
+%%      that case, the vnode is removed from the worker list.
+%%
+%%      'EXIT' messages are received in two cases, neither desired.
+%%      In one case, they are delivered when vnodes doing work for
+%%      this fitting exit, because the vnode API did not support
+%%      receiving 'DOWN' messages when these modules were written, so
+%%      the vnodes were forced to link to fittings instead of
+%%      monitoring them.  In the second case, 'EXIT' messages are
+%%      delivered when the builder exits.  This fitting would rather
+%%      just die when the builder dies, but it needs to trap exits to
+%%      prevent dying when the unfortunately linked vnodes die. (TODO)
+-spec handle_info({'DOWN', reference(), term(), term(), term()},
+                  atom(), #state{}) ->
+         {next_state, atom(), #state{}};
+                 ({'EXIT', pid(), term()}, atom(), #state{}) ->
+         {stop, builder_exited, #state{}} % when this *should* die
+       | {next_state, atom(), #state{}}.  % when this *should not* die
 handle_info({'DOWN', Ref, _, _, _}, StateName, State) ->
     Rest = lists:keydelete(Ref, #worker.monitor, State#state.workers),
     %% TODO: timeout in case we were waiting for 'done'
@@ -286,29 +302,14 @@ handle_info({'EXIT', Builder, _}, _StateName, #state{builder=Builder}=S) ->
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_fsm terminates with
-%% Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, StateName, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec terminate(term(), atom(), #state{}) -> ok.
 terminate(_Reason, _StateName, _State) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, StateName, State, Extra) ->
-%%                   {ok, StateName, NewState}
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Unused.
+-spec code_change(term(), atom(), #state{}, term()) ->
+         {ok, atom(), #state{}}.
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
@@ -316,10 +317,14 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+%% @doc Send the end-of-inputs signal to the next fitting.
+-spec forward_eoi(#state{}) -> ok.
 forward_eoi(#state{details=Details}) ->
     ?T(Details, [eoi], {fitting, send_eoi}),
     riak_pipe_fitting:eoi(Details#fitting_details.output).
 
+%% @doc Monitor the given vnode, and add it to our list of workers.
+-spec add_worker(ring_idx(), pid(), #state{}) -> #state{}.
 add_worker(Partition, Pid, State) ->
     %% check if we're already monitoring this pid before setting up a
     %% new monitor (in case pid re-requests details)
@@ -335,6 +340,10 @@ add_worker(Partition, Pid, State) ->
                                  |State#state.workers]}
     end.
 
+%% @doc Find a worker's entry in the worker list by its ring
+%%      partition index and pid.
+-spec worker_by_partpid(ring_idx(), pid(), #state{}) ->
+         {ok, #worker{}} | none.
 worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
     case [ W || #worker{partition=A, pid=I}=W <- Workers,
                 A == Partition, I == Pid] of
@@ -342,6 +351,16 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
         []                 -> none
     end.
 
+%% @doc Ensure that a fitting specification is valid.  This function
+%%      will check that the module is an atom that names a valid
+%%      module (see {@link riak_pipe_v:validate_module/2}), that the
+%%      arg is valid for the module (see {@link validate_argument/2}),
+%%      and that the partition function is of the proper form (see
+%%      {@link validate_partfun/1}).
+%%
+%%      If all components are valid, the atom `ok' is returned.  If
+%%      any piece is invalid, `badarg' is thrown.
+-spec validate_fitting(#fitting_spec{}) -> ok.
 validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,
@@ -376,7 +395,10 @@ validate_fitting(Other) ->
       [Other, 3]),
     throw(badarg).
 
-%% assumes Module has already been validated
+%% @doc Validate initialization `Arg' for the given `Module' by calling
+%%      `Module:validate_arg(Arg)', if it exists.  This function assumes
+%%      that `Module' has already been validate.
+-spec validate_argument(module(), term()) -> ok | {error, string()}.
 validate_argument(Module, Arg) ->
     case lists:member({validate_arg, 1}, Module:module_info(exports)) of
         true ->
@@ -391,11 +413,18 @@ validate_argument(Module, Arg) ->
             ok %% don't force modules to validate their args
     end.
 
+%% @doc Validate the parition-choice function.  This must either be
+%%      the atom `follow', or a valid funtion of arity 1 (see {@link
+%%      riak_pipe_v:validate_function/3}).
+-spec validate_partfun(follow | riak_pipe:partfun()) ->
+         ok | {error, string()}.
 validate_partfun(follow) ->
     ok;
 validate_partfun(PartFun) ->
     riak_pipe_v:validate_function("partfun", 1, PartFun).
 
+%% @doc Coerce a fitting name into a printable string.
+-spec format_name(term()) -> iolist().
 format_name(Name) when is_binary(Name) ->
     Name;
 format_name(Name) when is_list(Name) ->
@@ -406,6 +435,8 @@ format_name(Name) when is_list(Name) ->
 format_name(Name) ->
     io_lib:format("~p", [Name]).
 
+%% @doc Determine if a term is an iolist.
+-spec is_iolist(term()) -> boolean().
 is_iolist(Name) when is_list(Name) ->
     lists:all(fun is_iolist/1, Name);
 is_iolist(Name) when is_binary(Name) ->

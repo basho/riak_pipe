@@ -46,7 +46,7 @@
 %% '''
 %%
 %%      Many examples are included in the source code, and exported
-%%      as functions named =example*=.
+%%      as functions named `example'*.
 %%
 %%      The functions {@link result/3}, {@link eoi/1}, and {@link
 %%      log/3} are used by workers and fittings to deliver messages to
@@ -72,77 +72,71 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
--type exec_option() :: {sink, #fitting{pid :: pid()}}
-                     | {trace, trace_option()}
-                     | {log, riak_pipe_log:log_option()}.
--type trace_option() :: all
-                      | list()
-                      | set().
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
 %%      handle to the builder and the sink.  Calling code should then
-%%      call =wait_first_fitting(Builder) to get the lead fitting.
+%%      call `wait_first_fitting(Builder)' to get the lead fitting.
 %%      Inputs may then be sent to vnodes, tagged with that lead
 %%      fitting.
 %%
 %%      The pipeline is specified as an ordered list of
-%%      =#fitting_spec{}= records.  Each record has the fields:
+%%      `#fitting_spec{}' records.  Each record has the fields:
 %%<dl><dt>
-%%      =name=
+%%      `name'
 %%</dt><dd>
 %%      Any term. Will be used in logging, trace, and result messages.
 %%</dd><dt>
-%%      =module=
+%%      `module'
 %%</dt><dd>
 %%      Atom. The name of the module implementing the fitting.  This
-%%      module must implement the =riak_pipe_vnode_worker= behavior.
+%%      module must implement the `riak_pipe_vnode_worker' behavior.
 %%</dd><dt>
-%%      =arg=
+%%      `arg'
 %%</dt><dd>
 %%      Any term. Will be available to the fitting-implementation
 %%      module's initialization function.  This is a good way to
 %%      parameterize general fittings.
 %%</dd><dt>
-%%     =partfun=
+%%     `partfun'
 %%</dt><dd>
 %%      A function of arity 1.  Used to determine which vnode should
 %%      receive an input.  This function will be evaluated as
-%%      =Fun(Input)=.  The result of that evaluation should be a
+%%      `Fun(Input)'.  The result of that evaluation should be a
 %%      partition index, which will be used to find the owning node in
-%%      a =riak_core_ring=.
+%%      a `riak_core_ring'.
 %%</dd></dl>
 %%
-%%      Defined elements of the =Options= list are:
+%%      Defined elements of the `Options' list are:
 %%<dl><dt>
-%%      ={sink, Sink}=
+%%      `{sink, Sink}'
 %%</dt><dd>
-%%      If no =sink= option is provided, one will be created, such
+%%      If no `sink' option is provided, one will be created, such
 %%      that the calling process will receive all messages sent to the
 %%      sink (all output, logging, and trace messages).  If specified,
-%%      =Sink= should be a #fitting{} record, filled with the pid of
+%%      `Sink' should be a `#fitting{}' record, filled with the pid of
 %%      the process prepared to receive these messages.
 %%</dd><dt>
-%%      ={trace, TraceMatches}=
+%%      `{trace, TraceMatches}'
 %%</dt><dd>
-%%      If no =trace= option is provided, tracing will be disabled for
-%%      this pipeline.  If specified, =TraceMatches= should be either
-%%      the atom =all=, in which case all trace messages will be
+%%      If no `trace' option is provided, tracing will be disabled for
+%%      this pipeline.  If specified, `TraceMatches' should be either
+%%      the atom `all', in which case all trace messages will be
 %%      delivered, or a list of trace tags to match, in which case
 %%      only messages with matching tags will be delivered.
 %%</dd><dt>
-%%      ={log, LogTarget}=
+%%      `{log, LogTarget}'
 %%</dt><dd>
-%%      If no =log= option is provided, logging will be disabled for
-%%      this pipelien.  If specified, =LogTarget= should be either the
-%%      atom =sink=, in which case all log (and trace) messages will
-%%      be delivered to the sink, or the atom =sasl=, in which case
+%%      If no `log' option is provided, logging will be disabled for
+%%      this pipelien.  If specified, `LogTarget' should be either the
+%%      atom `sink', in which case all log (and trace) messages will
+%%      be delivered to the sink, or the atom `sasl', in which case
 %%      all log (and trace) messages will be printed via
-%%      =error_logger= to the SASL log.
+%%      `error_logger' to the SASL log.
 %%</dd></dl>
 %%
-%%      Other values are allowed, but ignored, in =Options=.  The
-%%      value of =Options= is provided to all fitting modules during
+%%      Other values are allowed, but ignored, in `Options'.  The
+%%      value of `Options' is provided to all fitting modules during
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
 -spec exec([#fitting_spec{}], [exec_option()]) ->
@@ -162,7 +156,7 @@ exec(Spec, Options) ->
 wait_first_fitting(Builder) ->
     riak_pipe_builder:get_first_fitting(Builder).
 
-%% @doc Ensure that the ={sink, Sink}= exec/2 option is defined
+%% @doc Ensure that the `{sink, Sink}' exec/2 option is defined
 %%      correctly, or define a fresh one pointing to the current
 %%      process if the option is absent.
 -spec ensure_sink([exec_option()]) ->
@@ -188,8 +182,8 @@ ensure_sink(Options) ->
             throw({invalid_sink, not_fitting})
     end.
 
-%% @doc Validate the trace option.  Converts ={trace, list()}= to
-%%      ={trace, set()}= for easier comparison later.
+%% @doc Validate the trace option.  Converts `{trace, list()}' to
+%%      `{trace, set()}' for easier comparison later.
 -spec correct_trace([exec_option()]) -> [exec_option()].
 correct_trace(Options) ->
     case lists:keyfind(trace, 1, Options) of
@@ -214,30 +208,30 @@ correct_trace(Options) ->
     end.
 
 %% @doc Send a result to the sink (used by worker processes).  The
-%%      result is delivered as a #pipe_result{} record in the sink
+%%      result is delivered as a `#pipe_result{}' record in the sink
 %%      process's mailbox.
 -spec result(term(), Sink::#fitting{}, term()) -> #pipe_result{}.
 result(From, #fitting{pid=Pid, ref=Ref}, Output) ->
     Pid ! #pipe_result{ref=Ref, from=From, result=Output}.
 
 %% @doc Send a log message to the sink (used by worker processes and
-%%      fittings).  The message is delivered as a #pipe_log{} record
+%%      fittings).  The message is delivered as a `#pipe_log{}' record
 %%      in the sink process's mailbox.
 -spec log(term(), Sink::#fitting{}, term()) -> #pipe_log{}.
 log(From, #fitting{pid=Pid, ref=Ref}, Msg) ->
     Pid ! #pipe_log{ref=Ref, from=From, msg=Msg}.
 
 %% @doc Send an end-of-inputs message to the sink (used by fittings).
-%%      The message is delivered as a #pipe_eoi{} record in the sink
+%%      The message is delivered as a `#pipe_eoi{}' record in the sink
 %%      process's mailbox.
 -spec eoi(Sink::#fitting{}) -> #pipe_eoi{}.
 eoi(#fitting{pid=Pid, ref=Ref}) ->
     Pid ! #pipe_eoi{ref=Ref}.
 
 %% @doc Pull the next pipeline result out of the sink's mailbox.
-%%      The =From= element of the =result= and =log= messages will
+%%      The `From' element of the `result' and `log' messages will
 %%      be the name of the fitting that generated them, as specified
-%%      in the =#fitting_spec{}= record used to start the pipeline.
+%%      in the `#fitting_spec{}' record used to start the pipeline.
 %%      This function assumes that it is called in the sink's process.
 %%      Passing the #fitting{} structure is only needed for reference
 %%      to weed out misdirected messages from forgotten pipelines.
@@ -264,9 +258,9 @@ receive_result(#fitting{ref=Ref}) ->
 %%      arrives).
 %%
 %%      If end-of-inputs was the last message received, the first
-%%      element of the returned tuple will be the atom =eoi=.  If the
+%%      element of the returned tuple will be the atom `eoi'.  If the
 %%      receive timed out before receiving end-of-inputs, the first
-%%      element of the returned tuple will be the atom =timeout=.
+%%      element of the returned tuple will be the atom `timeout'.
 %%
 %%      The second element will be a list of all result messages
 %%      received, while the third element will be a list of all log
@@ -333,7 +327,7 @@ example_start() ->
        {trace, all}]).
 
 %% @doc An example of sending data into a pipeline.  Queues the string
-%%      ="hello"= for the fitting provided, then signals end-of-inputs
+%%      `"hello"' for the fitting provided, then signals end-of-inputs
 %%      to that fitting.
 -spec example_send(#fitting{}) -> ok.
 example_send(Head) ->
@@ -378,7 +372,7 @@ example_transform() ->
 
 %% @doc Another example pipeline use.  This one sets up a simple
 %%      "reduce" fitting, which expects tuples of the form
-%%      ={Key::term(), Value::number()}=, and produces results of the
+%%      `{Key::term(), Value::number()}', and produces results of the
 %%      same form, where the output value is the sum of all of the
 %%      input values for a given key.
 %%
