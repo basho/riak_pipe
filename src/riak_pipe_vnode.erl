@@ -244,7 +244,7 @@ reply_archive(Pid, Fitting, Archive) ->
 %%</dt><dd>
 %%      Integer number of items in the worker's queue.
 %%</dd><dt>
-%%      `blocking_lenght'
+%%      `blocking_length'
 %%</dt><dd>
 %%      Integer number of requests blocking on the queue.
 %%</dd></dl>
@@ -775,7 +775,7 @@ worker_detail(#worker{fitting=Fitting, details=Details,
              end},
      {inputs_done, Done},
      {queue_length, queue:len(Q)},
-     {blocking_lenght, queue:len(B)}].
+     {blocking_length, queue:len(B)}].
 
 %% @doc Handle the fold request to start handoff.  Immediately ask all
 %%      `waiting' workers to archive, and note that others should
