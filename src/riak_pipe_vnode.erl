@@ -536,7 +536,7 @@ add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker, Input, Sender) ->
     end.
 
 %% @doc Merge the worker on this vnode with the worker from another
-%%      vnode.  (The grungy part of {@link, handle_handoff_data/2}.)
+%%      vnode.  (The grungy part of {@link handle_handoff_data/2}.)
 -spec handoff_worker(#worker{}, queue(), queue(), Archive::term()) ->
           #worker{}.
 handoff_worker(#worker{q=Q, blocking=Blocking}=Worker,
