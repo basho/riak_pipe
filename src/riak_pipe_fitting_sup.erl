@@ -46,7 +46,9 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %% @doc Start a new fitting under this supervisor.
--spec add_fitting(pid(), #fitting_spec{}, #fitting{},
+-spec add_fitting(pid(),
+                  riak_pipe:fitting_spec(),
+                  riak_pipe:fitting(),
                   riak_pipe:exec_opts()) ->
          {ok, pid()}.
 add_fitting(Builder, Spec, Output, Options) ->

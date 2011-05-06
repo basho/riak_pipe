@@ -44,7 +44,7 @@ start_link(Partition, VnodePid) ->
     supervisor:start_link(?MODULE, [Partition, VnodePid]).
 
 %% @doc Start a new worker under the supervisor.
--spec start_worker(pid(), #fitting_details{}) -> {ok, pid()}.
+-spec start_worker(pid(), riak_pipe_fitting:details()) -> {ok, pid()}.
 start_worker(Supervisor, Details) ->
     supervisor:start_child(Supervisor, [Details]).
 

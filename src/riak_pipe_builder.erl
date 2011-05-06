@@ -54,12 +54,14 @@
                 alive :: [{#fitting{}, reference()}], % monitor ref
                 waiting :: [term()]}). % gen_fsm From reply handles
 
+-opaque state() :: #state{}.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
 
 %% @doc Start a builder to setup the pipeline described by `Spec'.
--spec start_link([#fitting_spec{}], riak_pipe:exec_opts()) ->
+-spec start_link([riak_pipe:fitting_spec()], riak_pipe:exec_opts()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Spec, Options) ->
     gen_fsm:start_link(?MODULE, [Spec, Options], []).
@@ -67,7 +69,7 @@ start_link(Spec, Options) ->
 %% @doc Notify the `Builder' that the fitting has completed its
 %%      startup and is described by `Fitting'.  The value of `Fitting'
 %%      is what will be used to tag inputs to vnode queues.
--spec fitting_started(pid(), #fitting{}) -> ok.
+-spec fitting_started(pid(), riak_pipe:fitting()) -> ok.
 fitting_started(Builder, Fitting) ->
     gen_fsm:send_event(Builder, {fitting_started, Fitting}).
 
@@ -85,7 +87,7 @@ fitting_pids(Builder) ->
 %% @doc Get the `#fitting{}' record describing the lead fitting in
 %%      this builder's pipeline.  This function will block until the
 %%      builder has finished building the pipeline.
--spec get_first_fitting(pid()) -> {ok, #fitting{}}.
+-spec get_first_fitting(pid()) -> {ok, riak_pipe:fitting()}.
 get_first_fitting(Builder) ->
     gen_fsm:sync_send_event(Builder, get_first_fitting).
 
@@ -94,8 +96,8 @@ get_first_fitting(Builder) ->
 %%%===================================================================
 
 %% @doc Initialize the builder fsm (gen_fsm callback).
--spec init([ [#fitting_spec{}] | riak_pipe:exec_opts() ]) ->
-         {ok, start_first_fitting, #state{}, 0}.
+-spec init([ [riak_pipe:fitting_spec()] | riak_pipe:exec_opts() ]) ->
+         {ok, start_first_fitting, state(), 0}.
 init([Spec, Options]) ->
     {ok, start_first_fitting,
      #state{unstarted=lists:reverse(Spec),
@@ -107,8 +109,8 @@ init([Spec, Options]) ->
 %% @doc Start the tail fitting (gen_fsm callback).  The "first" in the
 %%      name comes from the fact that the "tail" fitting is started
 %%      first, so its handle can be passed to its predecessor. (TODO)
--spec start_first_fitting(timeout, #state{}) ->
-         {next_state, wait_fitting_start, #state{}}.
+-spec start_first_fitting(timeout, state()) ->
+         {next_state, wait_fitting_start, state()}.
 start_first_fitting(timeout, #state{unstarted=[Last|Rest]}=State) ->
     ClientOutput = client_output(State#state.options),
     start_fitting(Last,
@@ -122,8 +124,8 @@ start_first_fitting(timeout, #state{unstarted=[Last|Rest]}=State) ->
 %%      will start the next fitting up the pipe, or go into a wait
 %%      state pending pipeline shutdown.  Before going into that wait
 %%      state, the head fitting is sent to any clients that asked for it.
--spec wait_fitting_start({fitting_started, #fitting{}}, #state{}) ->
-         {next_state, wait_fitting_start | wait_pipeline_shutdown, #state{}}.
+-spec wait_fitting_start({fitting_started, riak_pipe:fitting()}, state()) ->
+         {next_state, wait_fitting_start | wait_pipeline_shutdown, state()}.
 wait_fitting_start({fitting_started, Fitting},
                    #state{alive=Alive}=State) ->
     Ref = erlang:monitor(process, Fitting#fitting.pid),
@@ -145,15 +147,15 @@ wait_fitting_start({fitting_started, Fitting},
 %% @doc All fittings have been started, and the builder is just
 %%      monitoring the pipeline (and replying to clients looking
 %%      for the head fitting).
--spec wait_pipeline_shutdown(term(), #state{}) ->
-         {next_state, wait_pipeline_shutdown, #state{}}.
+-spec wait_pipeline_shutdown(term(), state()) ->
+         {next_state, wait_pipeline_shutdown, state()}.
 wait_pipeline_shutdown(_Event, State) ->
     {next_state, wait_pipeline_shutdown, State}.
 
 %% @doc A client is asking for the head fitting, but that fitting
 %%      hasn't started yet.  Delay response for later.
--spec wait_fitting_start(get_first_fitting, term(), #state{}) ->
-         {next_state, wait_fitting_start, #state{}}.
+-spec wait_fitting_start(get_first_fitting, term(), state()) ->
+         {next_state, wait_fitting_start, state()}.
 wait_fitting_start(get_first_fitting, From,
                    #state{waiting=Waiting}=State) ->
             %% something still unstarted
@@ -162,24 +164,30 @@ wait_fitting_start(get_first_fitting, From,
      State#state{waiting=[From|Waiting]}}.
 
 %% @doc A client is asking for the head fitting.  Respond.
--spec wait_pipeline_shutdown(get_first_fitting, term(), #state{}) ->
-         {reply, {ok, #fitting{}}, wait_pipeline_shutdown, #state{}}.
+-spec wait_pipeline_shutdown(get_first_fitting, term(), state()) ->
+         {reply,
+          {ok, riak_pipe:fitting()},
+          wait_pipeline_shutdown,
+          state()}.
 wait_pipeline_shutdown(get_first_fitting, _From,
                        #state{alive=[{FirstFitting,_Ref}|_]}=State) ->
     %% everything is started - reply now
     {reply, {ok, FirstFitting}, wait_pipeline_shutdown, State}.
 
 %% @doc Unused.
--spec handle_event(term(), atom(), #state{}) ->
-         {next_state, atom(), #state{}}.
+-spec handle_event(term(), atom(), state()) ->
+         {next_state, atom(), state()}.
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
 %% @doc The only sync event recognized in all states is `fittings',
 %%      which retrieves a count of fittings waiting to be started,
 %%      and pids for fittings already started.
--spec handle_sync_event(fittings, term(), atom(), #state{}) ->
-         {reply, {integer(), [pid()]}, atom(), #state{}}.
+-spec handle_sync_event(fittings, term(), atom(), state()) ->
+         {reply,
+          {UnstartedCount::integer(), FittingPids::[pid()]},
+          StateName::atom(),
+          state()}.
 handle_sync_event(fittings, _From, StateName,
                   #state{unstarted=Unstarted, alive=Alive}=State) ->
     Reply = {length(Unstarted),
@@ -196,9 +204,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%      error `'DOWN'' message is received for any fitting, this
 %%      process exits immediately, with an error reason.
 -spec handle_info({'DOWN', reference(), process, pid(), term()},
-                  atom(), #state{}) ->
-         {next_state, atom(), #state{}}
-       | {stop, term(), #state{}}.
+                  atom(), state()) ->
+         {next_state, atom(), state()}
+       | {stop, term(), state()}.
 handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
             #state{alive=Alive}=State) ->
     %% stages should exit normally in order,
@@ -218,10 +226,10 @@ handle_info(_Info, StateName, State) ->
 
 %% @doc Decide whether to shutdown, or continue waiting for `'DOWN''
 %%      messages from other fittings.
--spec maybe_shutdown(term(), atom(), #state{}) ->
-         {stop, normal, #state{}}
-       | {stop, {fitting_exited_abnormally, term()}, #state{}}
-       | {next_state, wait_pipeline_shutdown, #state{}}.
+-spec maybe_shutdown(term(), atom(), state()) ->
+         {stop, normal, state()}
+       | {stop, {fitting_exited_abnormally, term()}, state()}
+       | {next_state, wait_pipeline_shutdown, state()}.
 maybe_shutdown(normal, wait_pipeline_shutdown, #state{alive=[]}=S) ->
     %% all fittings stopped normally, and we were waiting for them
     {stop, normal, S};
@@ -235,13 +243,13 @@ maybe_shutdown(Reason, _StateName, State) ->
     {stop, {fitting_exited_abnormally, Reason}, State}.
 
 %% @doc Unused.
--spec terminate(term(), atom(), #state{}) -> ok.
+-spec terminate(term(), atom(), state()) -> ok.
 terminate(_Reason, _StateName, _State) ->
     ok.
 
 %% @doc Unused.
--spec code_change(term(), atom(), #state{}, term()) ->
-         {ok, atom(), #state{}}.
+-spec code_change(term(), atom(), state(), term()) ->
+         {ok, atom(), state()}.
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
@@ -251,7 +259,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% @doc Start a new fitting, as specified by `Spec', sending its
 %%      output to `Output'.
--spec start_fitting(#fitting_spec{}, #fitting{},
+-spec start_fitting(riak_pipe:fitting_spec(),
+                    riak_pipe:fitting(),
                     riak_pipe:exec_opts()) ->
          {ok, pid()}.
 start_fitting(Spec, Output, Options) ->
@@ -260,14 +269,14 @@ start_fitting(Spec, Output, Options) ->
       self(), Spec, Output, Options).
 
 %% @doc Find the sink in the options passed.
--spec client_output(riak_pipe:exec_opts()) -> #fitting{}.
+-spec client_output(riak_pipe:exec_opts()) -> riak_pipe:fitting().
 client_output(Options) ->
     proplists:get_value(sink, Options).
 
 %% @doc Reply to all waiting requests for the head fitting.
 %%      `Waiting' is a list of the "`From'" parameters that gen_fsm
 %%      passed to the sync event handlers.
--spec announce_first_fitting(#fitting{}, [term()]) -> ok.
+-spec announce_first_fitting(riak_pipe:fitting(), [term()]) -> ok.
 announce_first_fitting(Fitting, Waiting) ->
     [ gen_fsm:reply(W, {ok, Fitting}) || W <- Waiting ],
     ok.

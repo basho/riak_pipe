@@ -26,7 +26,7 @@
 %%
 %% ```
 %% init(Partition :: riak_pipe_vnode:partition(),
-%%      FittingDetails :: #fitting_details{})
+%%      FittingDetails :: riak_pipe_fitting:details())
 %%   -> {ok, ModuleState :: term()}
 %% '''
 %%
@@ -123,9 +123,10 @@
 
 -include("riak_pipe.hrl").
 
--record(state, {details :: #fitting_details{},
+-record(state, {details :: riak_pipe_fitting:details(),
                 vnode :: pid(),
                 modstate :: term()}).
+-opaque state() :: #state{}.
 
 %% @doc Get information about this behavior.
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
@@ -141,7 +142,9 @@ behaviour_info(_Other) ->
 %%%===================================================================
 
 %% @doc Start a worker for the specified fitting+vnode.
--spec start_link(riak_pipe_vnode:partition(), pid(), #fitting_details{}) ->
+-spec start_link(riak_pipe_vnode:partition(),
+                 pid(),
+                 riak_pipe_fitting:details()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid, FittingDetails) ->
     gen_fsm:start_link(?MODULE, [Partition, VnodePid, FittingDetails], []).
@@ -174,7 +177,7 @@ send_archive(WorkerPid) ->
 %%      fitting's partition function is `follow'.
 -spec send_output(term(),
                   riak_pipe_vnode:partition(),
-                  #fitting_details{}) ->
+                  riak_pipe_fitting:details()) ->
          ok.
 send_output(Output, FromPartition,
             #fitting_details{output=Fitting}=Details) ->
@@ -185,7 +188,7 @@ send_output(Output, FromPartition,
 %%      happens to be the internal implementation of {@link
 %%      send_output/3}.
 -spec send_output(term(), riak_pipe_vnode:partition(),
-                  #fitting_details{}, #fitting{}) ->
+                  riak_pipe_fitting:details(), riak_pipe:fitting()) ->
          ok.
 send_output(Output, FromPartition,
             #fitting_details{name=Name}=_Details,
@@ -208,8 +211,9 @@ send_output(Output, FromPartition,
 %% @doc Initialize the worker.  This function calls the implementing
 %%      module's init function.  If that init function fails, the
 %%      worker stops with an `{init_failed, Type, Error}' reason.
--spec init([riak_pipe_vnode:partition() | pid() | #fitting_details{}]) ->
-         {ok, initial_input_request, #state{}, 0}
+-spec init([riak_pipe_vnode:partition() | pid()
+            | riak_pipe_fitting:details()]) ->
+         {ok, initial_input_request, state(), 0}
        | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
@@ -229,8 +233,8 @@ init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
 %%      deadlock that would result from having the worker wait for a
 %%      message from the vnode, which is waiting for a response from
 %%      this process.
--spec initial_input_request(timeout, #state{}) ->
-         {next_state, wait_for_input, #state{}}.
+-spec initial_input_request(timeout, state()) ->
+         {next_state, wait_for_input, state()}.
 initial_input_request(timeout, State) ->
     request_input(State),
     {next_state, wait_for_input, State}.
@@ -257,9 +261,9 @@ initial_input_request(timeout, State) ->
 -spec wait_for_input({input, done | term()}
                     |{handoff, term()}
                     |archive,
-                     #state{}) ->
-         {next_state, wait_for_input, #state{}}
-       | {stop, normal, #state{}}.
+                     state()) ->
+         {next_state, wait_for_input, state()}
+       | {stop, normal, state()}.
 wait_for_input({input, done}, State) ->
     ok = process_done(State),
     {stop, normal, State}; %%TODO: monitor
@@ -279,32 +283,32 @@ wait_for_input(archive, State) ->
     {stop, normal, State}.
 
 %% @doc Unused.
--spec handle_event(term(), atom(), #state{}) ->
-         {next_state, atom(), #state{}}.
+-spec handle_event(term(), atom(), state()) ->
+         {next_state, atom(), state()}.
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
 %% @doc Unused.
--spec handle_sync_event(term(), term(), atom(), #state{}) ->
-         {reply, ok, atom(), #state{}}.
+-spec handle_sync_event(term(), term(), atom(), state()) ->
+         {reply, ok, atom(), state()}.
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
 %% @doc Unused.
--spec handle_info(term(), atom(), #state{}) ->
-         {next_state, atom(), #state{}}.
+-spec handle_info(term(), atom(), state()) ->
+         {next_state, atom(), state()}.
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
 %% @doc Unused.
--spec terminate(term(), atom(), #state{}) -> ok.
+-spec terminate(term(), atom(), state()) -> ok.
 terminate(_Reason, _StateName, _State) ->
     ok.
 
 %% @doc Unused.
--spec code_change(term(), atom(), #state{}, term()) ->
-         {ok, atom(), #state{}}.
+-spec code_change(term(), atom(), state(), term()) ->
+         {ok, atom(), state()}.
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
@@ -314,13 +318,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% @doc Ask the vnode for this worker's next input.  The input will be
 %%      sent as an event later.
--spec request_input(#state{}) -> ok.
+-spec request_input(state()) -> ok.
 request_input(#state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:next_input(Vnode, Details#fitting_details.fitting).
 
 %% @doc Process an input - call the implementing module's `process/2'
 %%      function.
--spec process_input(term(), #state{}) -> #state{}.
+-spec process_input(term(), state()) -> state().
 process_input(Input, #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
     {ok, NewModState} = Module:process(Input, ModState),
@@ -328,14 +332,14 @@ process_input(Input, #state{details=FD, modstate=ModState}=State) ->
 
 %% @doc Process a done (end-of-inputs) message - call the implementing
 %%      module's `done/1' function.
--spec process_done(#state{}) -> ok.
+-spec process_done(state()) -> ok.
 process_done(#state{details=FD, modstate=ModState}) ->
     Module = FD#fitting_details.module,
     Module:done(ModState).
 
 %% @doc Process a handoff message - call the implementing module's
 %%      `handoff/2' function, if exported.
--spec handoff(term(), #state{}) -> #state{}.
+-spec handoff(term(), state()) -> state().
 handoff(HandoffArchive, #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
     case lists:member({handoff, 2}, Module:module_info(exports)) of
@@ -350,7 +354,7 @@ handoff(HandoffArchive, #state{details=FD, modstate=ModState}=State) ->
 %% @doc Process an archive request - call the implementing module's
 %%      `archive/1' fucntion, if exported.  The atom `undefined' is if
 %%      archive/1 is not exported.
--spec archive(#state{}) -> term().
+-spec archive(state()) -> term().
 archive(#state{details=FD, modstate=ModState}) ->
     Module = FD#fitting_details.module,
     case lists:member({archive, 1}, Module:module_info(exports)) of
@@ -363,7 +367,7 @@ archive(#state{details=FD, modstate=ModState}) ->
     end.
 
 %% @doc Send the archive to the vnode after it has been generated.
--spec reply_archive(term(), #state{}) -> ok.
+-spec reply_archive(term(), state()) -> ok.
 reply_archive(Archive, #state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:reply_archive(Vnode,
                                   Details#fitting_details.fitting,

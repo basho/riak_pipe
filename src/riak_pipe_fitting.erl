@@ -55,6 +55,10 @@
                 details :: #fitting_details{},
                 workers :: [#worker{}]}).
 
+-opaque state() :: #state{}.
+
+-type details() :: #fitting_details{}.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -62,7 +66,9 @@
 %% @doc Start the fitting, according to the `Spec' given.  The fitting
 %%      will register with `Builder' and will request its outputs to
 %%      be processed under the `Output' fitting.
--spec start_link(pid(), #fitting_spec{}, #fitting{},
+-spec start_link(pid(),
+                 riak_pipe:fitting_spec(),
+                 riak_pipe:fitting(),
                  riak_pipe:exec_opts()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Builder, Spec, Output, Options) ->
@@ -70,7 +76,7 @@ start_link(Builder, Spec, Output, Options) ->
 
 %% @doc Send an end-of-inputs message to the specified fitting
 %%      process (possibly the sink).
--spec eoi(#fitting{}) -> ok.
+-spec eoi(riak_pipe:fitting()) -> ok.
 eoi(#fitting{partfun=sink}=Sink) ->
     riak_pipe:eoi(Sink);
 eoi(#fitting{pid=Pid}) ->
@@ -82,8 +88,8 @@ eoi(#fitting{pid=Pid}) ->
 %%      This function assumes that it is being called from the vnode
 %%      process, so the `self()' can be used to give the fitting
 %%      a pid to monitor.
--spec get_details(#fitting{}, riak_pipe_vnode:partition()) ->
-         {ok, #fitting_details{}} | gone.
+-spec get_details(riak_pipe:fitting(), riak_pipe_vnode:partition()) ->
+         {ok, details()} | gone.
 get_details(Fitting, Partition) ->
     try
         gen_fsm:sync_send_event(Fitting#fitting.pid,
@@ -96,7 +102,7 @@ get_details(Fitting, Partition) ->
 %%      assumes that it is being called from the vnode process, so
 %%      that `self()' can be used to inform the fitting of which
 %%      worker is done.
--spec worker_done(#fitting{}) -> ok.
+-spec worker_done(riak_pipe:fitting()) -> ok.
 worker_done(Fitting) ->
     gen_fsm:sync_send_event(Fitting#fitting.pid, {done, self()}).
 
@@ -118,9 +124,9 @@ workers(Fitting) ->
 %%      builder process, so it will tear down if the builder exits
 %%      abnormally (which happens if another fitting exist
 %%      abnormally).
--spec init([pid() | #fitting_spec{} | #fitting{}
+-spec init([pid() | riak_pipe:fitting_spec() | riak_pipe:fitting()
             | riak_pipe:exec_opts()]) ->
-         {ok, wait_upstream_eoi, #state{}}.
+         {ok, wait_upstream_eoi, state()}.
 init([Builder,
       #fitting_spec{name=Name, module=Module, arg=Arg, partfun=PartFun},
       Output,
@@ -155,9 +161,9 @@ init([Builder,
 %%      then begins waiting for them to respond done.  If it has no
 %%      workers when it receives end-of-inputs, the fitting stops
 %%      immediately.
--spec wait_upstream_eoi(eoi, #state{}) ->
-         {stop, normal, #state{}}
-       | {next_state, wait_workers_done, #state{}}.
+-spec wait_upstream_eoi(eoi, state()) ->
+         {stop, normal, state()}
+       | {next_state, wait_workers_done, state()}.
 wait_upstream_eoi(eoi, #state{workers=[], details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
     %% no workers to stop
@@ -181,10 +187,10 @@ wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
 %%      In this case, the fitting simply demonitors the vnode, and
 %%      removes it from its worker list.
 -spec wait_upstream_eoi({get_details, riak_pipe_vnode:partition(), pid()},
-                        term(), #state{}) ->
-         {reply, {ok, #fitting_details{}}, wait_upstream_eoi, #state{}};
-                       ({done, pid()}, term(), #state{}) ->
-         {reply, ok, wait_upstream_eoi, #state{}}.
+                        term(), state()) ->
+         {reply, {ok, details()}, wait_upstream_eoi, state()};
+                       ({done, pid()}, term(), state()) ->
+         {reply, ok, wait_upstream_eoi, state()}.
 wait_upstream_eoi({get_details, Partition, Pid}=M, _From, State) ->
     ?T(State#state.details, [get_details], {fitting, M}),
     NewState = add_worker(Partition, Pid, State),
@@ -218,11 +224,11 @@ wait_upstream_eoi({done, Pid}=M, _From, State) ->
 %%      while in this state, it responds with the detail as usual,
 %%      but also immediately sends end-of-inputs to that vnode.
 -spec wait_workers_done({get_details, riak_pipe_vnode:partition(), pid()},
-                        term(), #state{}) ->
-         {reply, {ok, #fitting_details{}}, wait_workers_done, #state{}};
-                       ({done, pid()}, term(), #state{}) ->
-         {reply, ok, wait_workers_done, #state{}}
-       | {stop, normal, ok, #state{}}.
+                        term(), state()) ->
+         {reply, {ok, details()}, wait_workers_done, state()};
+                       ({done, pid()}, term(), state()) ->
+         {reply, ok, wait_workers_done, state()}
+       | {stop, normal, ok, state()}.
 wait_workers_done({get_details, Partition, Pid}=M, _From, State) ->
     %% handoff caused a late get_details
     ?T(State#state.details, [get_details], {late_fitting, M}),
@@ -252,8 +258,8 @@ wait_workers_done({done, Pid}=M, _From, State) ->
     end.
 
 %% @doc Unused.
--spec handle_event(term(), atom(), #state{}) ->
-         {next_state, atom(), #state{}}.
+-spec handle_event(term(), atom(), state()) ->
+         {next_state, atom(), state()}.
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -261,8 +267,8 @@ handle_event(_Event, StateName, State) ->
 %%      retrieves a list of ring partition indexes that have requested
 %%      this fittings details (i.e. that are doing work for this
 %%      fitting).
--spec handle_sync_event(workers, term(), atom(), #state{}) ->
-         {reply, [riak_pipe_vnode:partition()], atom(), #state{}}.
+-spec handle_sync_event(workers, term(), atom(), state()) ->
+         {reply, [riak_pipe_vnode:partition()], atom(), state()}.
 handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     Partitions = [ P || #worker{partition=P} <- Workers ],
     {reply, Partitions, StateName, State};
@@ -286,11 +292,11 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%      just die when the builder dies, but it needs to trap exits to
 %%      prevent dying when the unfortunately linked vnodes die. (TODO)
 -spec handle_info({'DOWN', reference(), term(), term(), term()},
-                  atom(), #state{}) ->
-         {next_state, atom(), #state{}};
-                 ({'EXIT', pid(), term()}, atom(), #state{}) ->
-         {stop, builder_exited, #state{}} % when this *should* die
-       | {next_state, atom(), #state{}}.  % when this *should not* die
+                  atom(), state()) ->
+         {next_state, atom(), state()};
+                 ({'EXIT', pid(), term()}, atom(), state()) ->
+         {stop, builder_exited, state()} % when this *should* die
+       | {next_state, atom(), state()}.  % when this *should not* die
 handle_info({'DOWN', Ref, _, _, _}, StateName, State) ->
     Rest = lists:keydelete(Ref, #worker.monitor, State#state.workers),
     %% TODO: timeout in case we were waiting for 'done'
@@ -303,13 +309,13 @@ handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
 %% @doc Unused.
--spec terminate(term(), atom(), #state{}) -> ok.
+-spec terminate(term(), atom(), state()) -> ok.
 terminate(_Reason, _StateName, _State) ->
     ok.
 
 %% @doc Unused.
--spec code_change(term(), atom(), #state{}, term()) ->
-         {ok, atom(), #state{}}.
+-spec code_change(term(), atom(), state(), term()) ->
+         {ok, atom(), state()}.
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
@@ -318,13 +324,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 
 %% @doc Send the end-of-inputs signal to the next fitting.
--spec forward_eoi(#state{}) -> ok.
+-spec forward_eoi(state()) -> ok.
 forward_eoi(#state{details=Details}) ->
     ?T(Details, [eoi], {fitting, send_eoi}),
     riak_pipe_fitting:eoi(Details#fitting_details.output).
 
 %% @doc Monitor the given vnode, and add it to our list of workers.
--spec add_worker(riak_pipe_vnode:partition(), pid(), #state{}) -> #state{}.
+-spec add_worker(riak_pipe_vnode:partition(), pid(), state()) -> state().
 add_worker(Partition, Pid, State) ->
     %% check if we're already monitoring this pid before setting up a
     %% new monitor (in case pid re-requests details)
@@ -342,7 +348,7 @@ add_worker(Partition, Pid, State) ->
 
 %% @doc Find a worker's entry in the worker list by its ring
 %%      partition index and pid.
--spec worker_by_partpid(riak_pipe_vnode:partition(), pid(), #state{}) ->
+-spec worker_by_partpid(riak_pipe_vnode:partition(), pid(), state()) ->
          {ok, #worker{}} | none.
 worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
     case [ W || #worker{partition=A, pid=I}=W <- Workers,
@@ -360,7 +366,7 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 %%
 %%      If all components are valid, the atom `ok' is returned.  If
 %%      any piece is invalid, `badarg' is thrown.
--spec validate_fitting(#fitting_spec{}) -> ok.
+-spec validate_fitting(riak_pipe:fitting_spec()) -> ok.
 validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,

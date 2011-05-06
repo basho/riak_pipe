@@ -52,16 +52,17 @@
 -include("riak_pipe.hrl").
 
 -record(state, {p :: riak_pipe_vnode:partition(),
-                fd :: #fitting_details{}}).
+                fd :: riak_pipe_fitting:details()}).
+-opaque state() :: #state{}.
 
 %% @doc Init just stashes the `Partition' and `FittingDetails' for later.
--spec init(riak_pipe_vnode:partition(), #fitting_details{}) ->
-         {ok, #state{}}.
+-spec init(riak_pipe_vnode:partition(), riak_pipe_fitting:details()) ->
+         {ok, state()}.
 init(Partition, FittingDetails) ->
     {ok, #state{p=Partition, fd=FittingDetails}}.
 
 %% @doc Process evaluates the fitting's argument function.
--spec process(term(), #state{}) -> {ok, #state{}}.
+-spec process(term(), state()) -> {ok, state()}.
 process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
     Fun = FittingDetails#fitting_details.arg,
     try
@@ -75,7 +76,7 @@ process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
     {ok, State}.
 
 %% @doc Unused.
--spec done(#state{}) -> ok.
+-spec done(state()) -> ok.
 done(_State) ->
     ok.
 

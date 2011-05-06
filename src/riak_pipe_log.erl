@@ -34,7 +34,7 @@
 %%      option was set to `sasl', log messages are printed via
 %%      `error_logger' to the SASL log.  If no option was given, log
 %%      messages are discarded.
--spec log(#fitting_details{}, term()) -> ok.
+-spec log(riak_pipe_fitting:details(), term()) -> ok.
 log(#fitting_details{options=O, name=N}, Msg) ->
     case proplists:get_value(log, O) of
         undefined ->
@@ -58,7 +58,7 @@ log(#fitting_details{options=O, name=N}, Msg) ->
 %%      The `node()' and the name of the fitting will be added to the
 %%      `Types' list - the calling function does not need to specify
 %%      them.
--spec trace(#fitting_details{}, [term()], term()) -> ok.
+-spec trace(riak_pipe_fitting:details(), [term()], term()) -> ok.
 trace(#fitting_details{options=O, name=N}=FD, Types, Msg) ->
     TraceOn = case proplists:get_value(trace, O) of
                   all ->

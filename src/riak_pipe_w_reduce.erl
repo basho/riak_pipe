@@ -91,18 +91,20 @@
 
 -record(state, {accs :: dict(),
                 p :: riak_pipe_vnode:partition(),
-                fd :: #fitting_details{}}).
+                fd :: riak_pipe_fitting:details()}).
+-opaque state() :: #state{}.
 
 %% @doc Setup creates the store for evaluation results (a dict()) and
 %%      stashes away the `Partition' and `FittingDetails' for later.
--spec init(riak_pipe_vnode:partition(), #fitting_details{}) ->
-         {ok, #state{}}.
+-spec init(riak_pipe_vnode:partition(),
+           riak_pipe_fitting:details()) ->
+         {ok, state()}.
 init(Partition, FittingDetails) ->
     {ok, #state{accs=dict:new(), p=Partition, fd=FittingDetails}}.
 
 %% @doc Process looks up the previous result for the `Key', and then
 %%      evaluates the funtion on that with the new `Input'.
--spec process({term(), term()}, #state{}) -> {ok, #state{}}.
+-spec process({term(), term()}, state()) -> {ok, state()}.
 process({Key, Input}, #state{accs=Accs}=State) ->
     case dict:find(Key, Accs) of
         {ok, OldAcc} -> ok;
@@ -122,14 +124,14 @@ process({Key, Input}, #state{accs=Accs}=State) ->
 
 %% @doc Unless the aggregation function sends its own outputs, done/1
 %%      is where all outputs are sent.
--spec done(#state{}) -> ok.
+-spec done(state()) -> ok.
 done(#state{accs=Accs, p=Partition, fd=FittingDetails}) ->
     [ riak_pipe_vnode_worker:send_output(A, Partition, FittingDetails)
       || A <- dict:to_list(Accs)],
     ok.
 
 %% @doc The archive is just the store (dict()) of evaluation results.
--spec archive(#state{}) -> {ok, dict()}.
+-spec archive(state()) -> {ok, dict()}.
 archive(#state{accs=Accs}) ->
     %% just send state of reduce so far
     {ok, Accs}.
@@ -138,7 +140,7 @@ archive(#state{accs=Accs}) ->
 %%      the same key are concatenated.  The reduce function is also
 %%      re-evaluated for the key, such that {@link done/1} still has
 %%      the correct value to send, even if no more inputs arrive.
--spec handoff(dict(), #state{}) -> {ok, #state{}}.
+-spec handoff(dict(), state()) -> {ok, state()}.
 handoff(HandoffAccs, #state{accs=Accs}=State) ->
     %% for each Acc, add to local accs;
     NewAccs = dict:merge(fun(K, HA, A) ->
@@ -148,7 +150,7 @@ handoff(HandoffAccs, #state{accs=Accs}=State) ->
     {ok, State#state{accs=NewAccs}}.
 
 %% @doc The dict:merge function for handoff.  Handles the reducing.
--spec handoff_acc(term(), [term()], [term()], #state{}) -> [term()].
+-spec handoff_acc(term(), [term()], [term()], state()) -> [term()].
 handoff_acc(Key, HandoffAccs, LocalAccs, State) ->
     InAcc = HandoffAccs++LocalAccs,
     case reduce(Key, InAcc, State) of
@@ -162,7 +164,7 @@ handoff_acc(Key, HandoffAccs, LocalAccs, State) ->
     end.
 
 %% @doc Actually evaluate the aggregation function.
--spec reduce(term(), [term()], #state{}) ->
+-spec reduce(term(), [term()], state()) ->
          {ok, [term()]} | {error, {term(), term(), term()}}.
 reduce(Key, InAcc, #state{p=Partition, fd=FittingDetails}) ->
     Fun = FittingDetails#fitting_details.arg,

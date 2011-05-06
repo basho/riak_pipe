@@ -72,8 +72,10 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-type fitting() :: #fitting{}.
+-type fitting_spec() :: #fitting_spec{}.
 -type exec_opts() :: [exec_option()].
--type exec_option() :: {sink, #fitting{pid :: pid()}}
+-type exec_option() :: {sink, fitting()}
                      | {trace, all | list() | set()}
                      | {log, sink | sasl}.
 
@@ -143,8 +145,8 @@
 %%      value of `Options' is provided to all fitting modules during
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
--spec exec([#fitting_spec{}], exec_opts()) ->
-         {ok, Builder::pid(), Sink::#fitting{}}.
+-spec exec([fitting_spec()], exec_opts()) ->
+         {ok, Builder::pid(), Sink::fitting()}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
     {Sink, SinkOptions} = ensure_sink(Options),
@@ -156,7 +158,7 @@ exec(Spec, Options) ->
 %% @doc Ask the pipeline builder for the handle of the first fitting.
 %%      This handle may be used to queue work on vnodes.  The
 %%      builder's pid was returned from the call to {@link exec/2}.
--spec wait_first_fitting(pid()) -> {ok, #fitting{}}.
+-spec wait_first_fitting(pid()) -> {ok, fitting()}.
 wait_first_fitting(Builder) ->
     riak_pipe_builder:get_first_fitting(Builder).
 
@@ -164,7 +166,7 @@ wait_first_fitting(Builder) ->
 %%      correctly, or define a fresh one pointing to the current
 %%      process if the option is absent.
 -spec ensure_sink(exec_opts()) ->
-         {#fitting{pid::pid()}, exec_opts()}.
+         {fitting(), exec_opts()}.
 ensure_sink(Options) ->
     case lists:keyfind(sink, 1, Options) of
         {sink, #fitting{pid=Pid}=Sink} ->
@@ -214,21 +216,21 @@ correct_trace(Options) ->
 %% @doc Send a result to the sink (used by worker processes).  The
 %%      result is delivered as a `#pipe_result{}' record in the sink
 %%      process's mailbox.
--spec result(term(), Sink::#fitting{}, term()) -> #pipe_result{}.
+-spec result(term(), Sink::fitting(), term()) -> #pipe_result{}.
 result(From, #fitting{pid=Pid, ref=Ref}, Output) ->
     Pid ! #pipe_result{ref=Ref, from=From, result=Output}.
 
 %% @doc Send a log message to the sink (used by worker processes and
 %%      fittings).  The message is delivered as a `#pipe_log{}' record
 %%      in the sink process's mailbox.
--spec log(term(), Sink::#fitting{}, term()) -> #pipe_log{}.
+-spec log(term(), Sink::fitting(), term()) -> #pipe_log{}.
 log(From, #fitting{pid=Pid, ref=Ref}, Msg) ->
     Pid ! #pipe_log{ref=Ref, from=From, msg=Msg}.
 
 %% @doc Send an end-of-inputs message to the sink (used by fittings).
 %%      The message is delivered as a `#pipe_eoi{}' record in the sink
 %%      process's mailbox.
--spec eoi(Sink::#fitting{}) -> #pipe_eoi{}.
+-spec eoi(Sink::fitting()) -> #pipe_eoi{}.
 eoi(#fitting{pid=Pid, ref=Ref}) ->
     Pid ! #pipe_eoi{ref=Ref}.
 
@@ -240,7 +242,7 @@ eoi(#fitting{pid=Pid, ref=Ref}) ->
 %%      Passing the #fitting{} structure is only needed for reference
 %%      to weed out misdirected messages from forgotten pipelines.
 %%      A static timeout of five seconds is hard-coded (TODO).
--spec receive_result(Sink::#fitting{}) ->
+-spec receive_result(Sink::fitting()) ->
          {result, {From::term(), Result::term()}}
        | {log, {From::term(), Message::term()}}
        | eoi
@@ -275,7 +277,7 @@ receive_result(#fitting{ref=Ref}) ->
 %%      to weed out misdirected messages from forgotten pipelines.  A
 %%      static inter-message timeout of five seconds is hard-coded
 %%      (TODO).
--spec collect_results(Sink::#fitting{}) ->
+-spec collect_results(Sink::fitting()) ->
           {eoi | timeout,
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
@@ -285,7 +287,7 @@ collect_results(#fitting{}=Fitting) ->
 %% @doc Internal implementation of collect_results/1.  Just calls
 %%      receive_result/1, and accumulates lists of result and log
 %%      messages.
--spec collect_results(Sink::#fitting{},
+-spec collect_results(Sink::fitting(),
                       ResultAcc::[{From::term(), Result::term()}],
                       LogAcc::[{From::term(), Result::term()}]) ->
           {eoi | timeout,
@@ -321,7 +323,7 @@ example() ->
 %% @doc An example of starting a simple pipe.  Starts a pipe with one
 %%      "pass" fitting.  Sink is pointed at the current process.
 %%      Logging is pointed at the sink.  All tracing is enabled.
--spec example_start() -> {ok, Builder::pid(), Sink::#fitting{}}.
+-spec example_start() -> {ok, Builder::pid(), Sink::fitting()}.
 example_start() ->
     riak_pipe:exec(
       [#fitting_spec{name=empty_pass,
@@ -333,14 +335,14 @@ example_start() ->
 %% @doc An example of sending data into a pipeline.  Queues the string
 %%      `"hello"' for the fitting provided, then signals end-of-inputs
 %%      to that fitting.
--spec example_send(#fitting{}) -> ok.
+-spec example_send(fitting()) -> ok.
 example_send(Head) ->
     ok = riak_pipe_vnode:queue_work(Head, "hello"),
     riak_pipe_fitting:eoi(Head).
 
 %% @doc An example of receiving data from a pipeline.  Reads all
 %%      results sent to the given sink.
--spec example_receive(Sink::#fitting{}) ->
+-spec example_receive(Sink::fitting()) ->
          {eoi | timeout, list(), list()}.
 example_receive(Sink) ->
     collect_results(Sink).
