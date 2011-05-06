@@ -18,6 +18,64 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc A "reduce"-like fitting (in the MapReduce sense).  Really more
+%%      like a keyed list-fold.  This fitting expects inputs of the
+%%      form `{Key, Value}'.  For each input, the fitting evaluates a
+%%      function (its argument) on the `Value' and any previous result
+%%      for that `Key', or `[]' (the empty list) if that `Key' has
+%%      never been seen by this worker.  When `done' is finally
+%%      received, the fitting sends each key-value pair it has
+%%      evaluated as an input to the next fittin.
+%%
+%%      The intent is that a fitting might receive a stream of inputs
+%%      like `{a, 1}, {b, 2}, {a 3}, {b, 4}' and send on results like
+%%      `{a, 4}, {b, 6}' by using a simple "sum" function.
+%%
+%%      This function expects a function as its argument.  The function
+%%      should be arity-4 and expect the arguments:
+%%<dl><dt>
+%%      `Key' :: term()
+%%</dt><dd>
+%%      Whatever aggregation key is necessary for the algorithm.
+%%</dd><dt>
+%%      `InAccumulator' :: [term()]
+%%</dt><dd>
+%%      A list composed of the new input, cons'd on the front of the
+%%      result of the last evaluation for this `Key' (or the empty list
+%%      if this is the first evaluation for the key).
+%%</dd><dt>
+%%      `Partition' :: riak_pipe_vnode:partition()
+%%</dt><dd>
+%%      The partition of the vnode on which this worker is running.
+%%      (Useful for logging, or sending other output.)
+%%</dd><dt>
+%%      `FittingDetails' :: #fitting_details{}
+%%</dt><dd>
+%%      The details of this fitting.
+%%      (Useful for logging, or sending other output.)
+%%</dd></dl>
+%%
+%%      The function should return a tuple of the form `{ok,
+%%      NewAccumulator}', where `NewAccumulator' is a list, onto which
+%%      the next input will be cons'd.  For example, the function to
+%%      sum values for a key, as described above might look like:
+%% ```
+%% fun(_Key, Inputs, _Partition, _FittingDetails) ->
+%%    {ok, [lists:sum(Inputs)]}
+%% end
+%% '''
+%%
+%%      The preferred partition-choice function for this fitting is
+%%      {@link partfun/1}.  It chooses a partition based on the hash
+%%      of the input `Key'.  Any other partition function should work,
+%%      but beware that a function that sends values for the same
+%%      `Key' to different partitions will result in fittings down the
+%%      pipe receiving multiple results for the `Key'.
+%%
+%%      This fitting produces as its archive, the store of evaluation
+%%      results for the keys it has seen.  To merge handoff values,
+%%      the lists stored with each key are concatenated, and the
+%%      reduce function is re-evaluated.
 -module(riak_pipe_w_reduce).
 -behaviour(riak_pipe_vnode_worker).
 
@@ -31,11 +89,20 @@
 
 -include("riak_pipe.hrl").
 
--record(state, {accs, p, fd}).
+-record(state, {accs :: dict(),
+                p :: riak_pipe_vnode:partition(),
+                fd :: #fitting_details{}}).
 
+%% @doc Setup creates the store for evaluation results (a dict()) and
+%%      stashes away the `Partition' and `FittingDetails' for later.
+-spec init(riak_pipe_vnode:partition(), #fitting_details{}) ->
+         {ok, #state{}}.
 init(Partition, FittingDetails) ->
     {ok, #state{accs=dict:new(), p=Partition, fd=FittingDetails}}.
 
+%% @doc Process looks up the previous result for the `Key', and then
+%%      evaluates the funtion on that with the new `Input'.
+-spec process({term(), term()}, #state{}) -> {ok, #state{}}.
 process({Key, Input}, #state{accs=Accs}=State) ->
     case dict:find(Key, Accs) of
         {ok, OldAcc} -> ok;
@@ -53,15 +120,25 @@ process({Key, Input}, #state{accs=Accs}=State) ->
             {ok, State}
     end.
 
+%% @doc Unless the aggregation function sends its own outputs, done/1
+%%      is where all outputs are sent.
+-spec done(#state{}) -> ok.
 done(#state{accs=Accs, p=Partition, fd=FittingDetails}) ->
     [ riak_pipe_vnode_worker:send_output(A, Partition, FittingDetails)
       || A <- dict:to_list(Accs)],
     ok.
 
+%% @doc The archive is just the store (dict()) of evaluation results.
+-spec archive(#state{}) -> {ok, dict()}.
 archive(#state{accs=Accs}) ->
     %% just send state of reduce so far
     {ok, Accs}.
 
+%% @doc The handoff merge is simple a dict:merge, where entries for
+%%      the same key are concatenated.  The reduce function is also
+%%      re-evaluated for the key, such that {@link done/1} still has
+%%      the correct value to send, even if no more inputs arrive.
+-spec handoff(dict(), #state{}) -> {ok, #state{}}.
 handoff(HandoffAccs, #state{accs=Accs}=State) ->
     %% for each Acc, add to local accs;
     NewAccs = dict:merge(fun(K, HA, A) ->
@@ -70,6 +147,8 @@ handoff(HandoffAccs, #state{accs=Accs}=State) ->
                          HandoffAccs, Accs),
     {ok, State#state{accs=NewAccs}}.
 
+%% @doc The dict:merge function for handoff.  Handles the reducing.
+-spec handoff_acc(term(), [term()], [term()], #state{}) -> [term()].
 handoff_acc(Key, HandoffAccs, LocalAccs, State) ->
     InAcc = HandoffAccs++LocalAccs,
     case reduce(Key, InAcc, State) of
@@ -82,6 +161,9 @@ handoff_acc(Key, HandoffAccs, LocalAccs, State) ->
             LocalAccs %% don't completely barf
     end.
 
+%% @doc Actually evaluate the aggregation function.
+-spec reduce(term(), [term()], #state{}) ->
+         {ok, [term()]} | {error, {term(), term(), term()}}.
 reduce(Key, InAcc, #state{p=Partition, fd=FittingDetails}) ->
     Fun = FittingDetails#fitting_details.arg,
     try
@@ -92,12 +174,18 @@ reduce(Key, InAcc, #state{p=Partition, fd=FittingDetails}) ->
             {error, {Type, Error, erlang:get_stacktrace()}}
     end.
 
+%% @doc Check that the arg is a valid arity-4 function.  See {@link
+%%      riak_pipe_v:validate_function/3}.
+-spec validate_arg(term()) -> ok | {error, iolist()}.
 validate_arg(Fun) when is_function(Fun) ->
     riak_pipe_v:validate_function("arg", 4, Fun);
 validate_arg(Fun) ->
     {error, io_lib:format("~p requires a function as argument, not a ~p",
                           [?MODULE, riak_pipe_v:type_of(Fun)])}.
 
+%% @doc The preferred partition function.  Chooses a partition based
+%%      on the hash of the `Key'.
+-spec partfun({term(), term()}) -> riak_pipe_vnode:partition().
 partfun({Key,_}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     DocIdx = chash:key_of(Key),

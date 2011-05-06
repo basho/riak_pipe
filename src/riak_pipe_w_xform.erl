@@ -18,6 +18,29 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Alter an input, and send the alteration as output.  For each
+%%      input, the fitting evaluates a function (passed as the fitting
+%%      argument).  That function should accept three parameters:
+%%<dl><dt>
+%%      `Input' :: term()
+%%</dt><dd>
+%%      Whatever the upstream fitting has sent.
+%%</dd><dt>
+%%      `Partition' :: riak_pipe_vnode:partition()
+%%</dt><dd>
+%%      The partition of the vnode on which this worker is running.
+%%      Necessary for logging and sending output.
+%%</dd><dt>
+%%      `FittingDetails' :: #fitting_details{}
+%%</dt><dd>
+%%      The details for the fitting.  Also necessary for logging and
+%%      sending output.
+%%</dd></dl>
+%%
+%%      The function should use `Partition' and `FittingDetails' along
+%%      with {@link riak_pipe_vnode_worker:send_output/3} to send
+%%      whatever outputs it likes (this allows the fitting to be used
+%%      as "filter" as well as "map").
 -module(riak_pipe_w_xform).
 -behaviour(riak_pipe_vnode_worker).
 
@@ -28,11 +51,17 @@
 
 -include("riak_pipe.hrl").
 
--record(state, {p, fd}).
+-record(state, {p :: riak_pipe_vnode:partition(),
+                fd :: #fitting_details{}}).
 
+%% @doc Init just stashes the `Partition' and `FittingDetails' for later.
+-spec init(riak_pipe_vnode:partition(), #fitting_details{}) ->
+         {ok, #state{}}.
 init(Partition, FittingDetails) ->
     {ok, #state{p=Partition, fd=FittingDetails}}.
 
+%% @doc Process evaluates the fitting's argument function.
+-spec process(term(), #state{}) -> {ok, #state{}}.
 process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
     Fun = FittingDetails#fitting_details.arg,
     try
@@ -45,9 +74,14 @@ process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
     end,
     {ok, State}.
 
+%% @doc Unused.
+-spec done(#state{}) -> ok.
 done(_State) ->
     ok.
 
+%% @doc Check that the argument is a valid function of arity 3.  See
+%%      {@link riak_pipe_v_validate_function/3}.
+-spec validate_arg(term()) -> ok | {error, iolist()}.
 validate_arg(Fun) when is_function(Fun) ->
     riak_pipe_v:validate_function("arg", 3, Fun);
 validate_arg(Fun) ->
