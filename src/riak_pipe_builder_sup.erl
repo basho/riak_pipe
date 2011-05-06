@@ -51,7 +51,7 @@ start_link() ->
 
 %% @doc Start a new pipeline builder.  Starts the builder process
 %%      under this supervisor.
--spec new_pipeline([#fitting_spec{}], [riak_pipe:exec_option()]) ->
+-spec new_pipeline([#fitting_spec{}], riak_pipe:exec_opts()) ->
          {ok, pid()}.
 new_pipeline(Spec, Options) ->
     supervisor:start_child(?MODULE, [Spec, Options]).

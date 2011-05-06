@@ -25,7 +25,7 @@
 %%      three functions:
 %%
 %% ```
-%% init(Partition :: ring_idx(),
+%% init(Partition :: riak_pipe_vnode:partition(),
 %%      FittingDetails :: #fitting_details{})
 %%   -> {ok, ModuleState :: term()}
 %% '''
@@ -141,7 +141,7 @@ behaviour_info(_Other) ->
 %%%===================================================================
 
 %% @doc Start a worker for the specified fitting+vnode.
--spec start_link(ring_idx(), pid(), #fitting_details{}) ->
+-spec start_link(riak_pipe_vnode:partition(), pid(), #fitting_details{}) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid, FittingDetails) ->
     gen_fsm:start_link(?MODULE, [Partition, VnodePid, FittingDetails], []).
@@ -173,7 +173,7 @@ send_archive(WorkerPid) ->
 %%      line. `FromPartition' is used in the case that the next
 %%      fitting's partition function is `follow'.
 -spec send_output(term(),
-                  ring_idx(),
+                  riak_pipe_vnode:partition(),
                   #fitting_details{}) ->
          ok.
 send_output(Output, FromPartition,
@@ -184,7 +184,7 @@ send_output(Output, FromPartition,
 %%      This is most often used to send output to the sink, but also
 %%      happens to be the internal implementation of {@link
 %%      send_output/3}.
--spec send_output(term(), ring_idx(),
+-spec send_output(term(), riak_pipe_vnode:partition(),
                   #fitting_details{}, #fitting{}) ->
          ok.
 send_output(Output, FromPartition,
@@ -208,7 +208,7 @@ send_output(Output, FromPartition,
 %% @doc Initialize the worker.  This function calls the implementing
 %%      module's init function.  If that init function fails, the
 %%      worker stops with an `{init_failed, Type, Error}' reason.
--spec init([ring_idx() | pid() | #fitting_details{}]) ->
+-spec init([riak_pipe_vnode:partition() | pid() | #fitting_details{}]) ->
          {ok, initial_input_request, #state{}, 0}
        | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->

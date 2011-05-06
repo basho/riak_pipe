@@ -49,7 +49,7 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
--record(state, {options :: [riak_pipe:exec_option()],
+-record(state, {options :: riak_pipe:exec_opts(),
                 unstarted :: [#fitting_spec{}],
                 alive :: [{#fitting{}, reference()}], % monitor ref
                 waiting :: [term()]}). % gen_fsm From reply handles
@@ -59,7 +59,7 @@
 %%%===================================================================
 
 %% @doc Start a builder to setup the pipeline described by `Spec'.
--spec start_link([#fitting_spec{}], [riak_pipe:exec_option()]) ->
+-spec start_link([#fitting_spec{}], riak_pipe:exec_opts()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Spec, Options) ->
     gen_fsm:start_link(?MODULE, [Spec, Options], []).
@@ -94,7 +94,7 @@ get_first_fitting(Builder) ->
 %%%===================================================================
 
 %% @doc Initialize the builder fsm (gen_fsm callback).
--spec init([ [#fitting_spec{}] | [riak_pipe:exec_option()] ]) ->
+-spec init([ [#fitting_spec{}] | riak_pipe:exec_opts() ]) ->
          {ok, start_first_fitting, #state{}, 0}.
 init([Spec, Options]) ->
     {ok, start_first_fitting,
@@ -252,7 +252,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% @doc Start a new fitting, as specified by `Spec', sending its
 %%      output to `Output'.
 -spec start_fitting(#fitting_spec{}, #fitting{},
-                    [riak_pipe:exec_option()]) ->
+                    riak_pipe:exec_opts()) ->
          {ok, pid()}.
 start_fitting(Spec, Output, Options) ->
     ?DPF("Starting fitting for ~p", [Spec]),
@@ -260,7 +260,7 @@ start_fitting(Spec, Output, Options) ->
       self(), Spec, Output, Options).
 
 %% @doc Find the sink in the options passed.
--spec client_output([riak_pipe:exec_option()]) -> #fitting{}.
+-spec client_output(riak_pipe:exec_opts()) -> #fitting{}.
 client_output(Options) ->
     proplists:get_value(sink, Options).
 

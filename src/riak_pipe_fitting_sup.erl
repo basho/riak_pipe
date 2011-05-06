@@ -47,7 +47,7 @@ start_link() ->
 
 %% @doc Start a new fitting under this supervisor.
 -spec add_fitting(pid(), #fitting_spec{}, #fitting{},
-                  [riak_pipe:exec_option()]) ->
+                  riak_pipe:exec_opts()) ->
          {ok, pid()}.
 add_fitting(Builder, Spec, Output, Options) ->
     ?DPF("Adding fitting for ~p", [Spec]),

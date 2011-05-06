@@ -2,7 +2,7 @@
         {
           pid :: pid(),
           ref :: reference(),
-          partfun :: partfun()
+          partfun :: riak_pipe_vnode:partfun()
         }).
 
 -record(fitting_details,
@@ -12,7 +12,7 @@
           module :: atom(),
           arg :: term(),
           output :: #fitting{},
-          options :: exec_opts()
+          options :: riak_pipe:exec_opts()
         }).
 
 -record(fitting_spec,
@@ -20,7 +20,7 @@
           name :: term(),
           module :: atom(),
           arg :: term(),
-          partfun :: partfun()
+          partfun :: riak_pipe_vnode:partfun()
         }).
 
 -record(pipe_result,
@@ -41,15 +41,3 @@
           from,
           msg
         }).
-
--type ring_idx() :: integer(). % ring partition index
--type partfun() :: fun((term()) -> ring_idx()) | follow | sink.
--type exec_opts() :: [exec_option()].
--type exec_option() :: {sink, #fitting{pid :: pid()}}
-                     | {trace, trace_option()}
-                     | {log, log_option()}.
--type trace_option() :: all
-                      | list()
-                      | set().
--type log_option() :: sink
-                    | sasl.

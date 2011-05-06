@@ -38,7 +38,7 @@
 %%%===================================================================
 
 %% @doc Start the supervisor.
--spec start_link(ring_idx(), pid()) ->
+-spec start_link(riak_pipe_vnode:partition(), pid()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid) ->
     supervisor:start_link(?MODULE, [Partition, VnodePid]).
@@ -55,7 +55,7 @@ start_worker(Supervisor, Details) ->
 %% @doc Initialize the supervisor.  This is a `simple_one_for_one',
 %%      whose child spec is for starting `riak_pipe_vnode_worker'
 %%      FSMs.
--spec init([ring_idx() | pid()]) ->
+-spec init([riak_pipe_vnode:partition() | pid()]) ->
          {ok, {{supervisor:strategy(),
                 pos_integer(),
                 pos_integer()},

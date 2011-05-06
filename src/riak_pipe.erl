@@ -72,6 +72,10 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-type exec_opts() :: [exec_option()].
+-type exec_option() :: {sink, #fitting{pid :: pid()}}
+                     | {trace, all | list() | set()}
+                     | {log, sink | sasl}.
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
@@ -139,7 +143,7 @@
 %%      value of `Options' is provided to all fitting modules during
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
--spec exec([#fitting_spec{}], [exec_option()]) ->
+-spec exec([#fitting_spec{}], exec_opts()) ->
          {ok, Builder::pid(), Sink::#fitting{}}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
@@ -159,8 +163,8 @@ wait_first_fitting(Builder) ->
 %% @doc Ensure that the `{sink, Sink}' exec/2 option is defined
 %%      correctly, or define a fresh one pointing to the current
 %%      process if the option is absent.
--spec ensure_sink([exec_option()]) ->
-         {#fitting{pid::pid()}, [exec_option()]}.
+-spec ensure_sink(exec_opts()) ->
+         {#fitting{pid::pid()}, exec_opts()}.
 ensure_sink(Options) ->
     case lists:keyfind(sink, 1, Options) of
         {sink, #fitting{pid=Pid}=Sink} ->
@@ -184,7 +188,7 @@ ensure_sink(Options) ->
 
 %% @doc Validate the trace option.  Converts `{trace, list()}' to
 %%      `{trace, set()}' for easier comparison later.
--spec correct_trace([exec_option()]) -> [exec_option()].
+-spec correct_trace(exec_opts()) -> exec_opts().
 correct_trace(Options) ->
     case lists:keyfind(trace, 1, Options) of
         {trace, all} ->

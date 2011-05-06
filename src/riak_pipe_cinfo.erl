@@ -82,7 +82,7 @@ fitting(C, Fit) ->
 %% @doc Print the ring partition index of a vnode doing work for some
 %%      fitting.  The `Worker' should be the index to print.
 -spec fitting_worker(ClusterInfoHandle::term(),
-                     Worker::ring_idx()) -> ok.
+                     Worker::riak_pipe_vnode:partition()) -> ok.
 fitting_worker(C, W) ->
     cluster_info:format(C, "     * ~p~n", [W]),
     ok.

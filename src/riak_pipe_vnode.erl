@@ -48,6 +48,8 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
+-type partfun() :: fun((term()) -> partition()) | follow | sink.
+
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
 
@@ -69,7 +71,7 @@
                   acc :: term(),
                   sender :: sender()}).
 
--record(state, {partition :: ring_idx(),
+-record(state, {partition :: partition(),
                 worker_sup :: pid(),
                 workers :: [#worker{}],
                 worker_limit :: pos_integer(),
@@ -89,7 +91,7 @@
 %% API
 
 %% @doc Start the vnode, if it isn't started already.
--spec start_vnode(ring_idx()) -> {ok, pid()}.
+-spec start_vnode(partition()) -> {ok, pid()}.
 start_vnode(I) ->
     riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
 
@@ -123,7 +125,7 @@ validate_or_exit(Thing, Validator, Msg) ->
 %%      Positive integer, default 64. The maximum length of each
 %%      worker's input queue.
 %%</dd></dl>
--spec init([ring_idx()]) -> {ok, #state{}}.
+-spec init([partition()]) -> {ok, #state{}}.
 init([Partition]) ->
     WL = validate_or_exit(app_helper:get_env(riak_pipe, worker_limit,
                                              ?DEFAULT_WORKER_LIMIT),
@@ -149,7 +151,7 @@ init([Partition]) ->
 %%      semi-randomly choose a local vnode if the spec for the head
 %%      fitting of a pipeline uses a partition-choice function of
 %%      `follow'.
--spec any_local_vnode() -> ring_idx().
+-spec any_local_vnode() -> partition().
 any_local_vnode() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     hd(riak_core_ring:my_indices(Ring)).
@@ -172,7 +174,7 @@ queue_work(#fitting{partfun=PartFun}=Fitting, Input) ->
 %%      the function is used to support the `follow' partfun, by
 %%      allowing a worker to send the input directly to the vnode it
 %%      works for.
--spec queue_work(#fitting{}, term(), ring_idx()) ->
+-spec queue_work(#fitting{}, term(), partition()) ->
          ok | {error, worker_limit_reached | worker_startup_failed}.
 queue_work(Fitting, Input, PartitionOverride) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -248,7 +250,7 @@ reply_archive(Pid, Fitting, Archive) ->
 %%</dt><dd>
 %%      Integer number of requests blocking on the queue.
 %%</dd></dl>
--spec status(pid()) -> {ring_idx(), [[{atom(), term()}]]}.
+-spec status(pid()) -> {partition(), [[{atom(), term()}]]}.
 status(Pid) ->
     Ref = make_ref(),
     riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()}}),

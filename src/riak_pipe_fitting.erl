@@ -48,7 +48,7 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
--record(worker, {partition :: ring_idx(),
+-record(worker, {partition :: riak_pipe_vnode:partition(),
                  pid :: pid(),
                  monitor :: reference()}).
 -record(state, {builder :: pid(),
@@ -63,7 +63,7 @@
 %%      will register with `Builder' and will request its outputs to
 %%      be processed under the `Output' fitting.
 -spec start_link(pid(), #fitting_spec{}, #fitting{},
-                 [riak_pipe:exec_option()]) ->
+                 riak_pipe:exec_opts()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Builder, Spec, Output, Options) ->
     gen_fsm:start_link(?MODULE, [Builder, Spec, Output, Options], []).
@@ -82,7 +82,7 @@ eoi(#fitting{pid=Pid}) ->
 %%      This function assumes that it is being called from the vnode
 %%      process, so the `self()' can be used to give the fitting
 %%      a pid to monitor.
--spec get_details(#fitting{}, ring_idx()) ->
+-spec get_details(#fitting{}, riak_pipe_vnode:partition()) ->
          {ok, #fitting_details{}} | gone.
 get_details(Fitting, Partition) ->
     try
@@ -102,7 +102,7 @@ worker_done(Fitting) ->
 
 %% @doc Get the list of ring partition indexes (vnodes) that are doing
 %%      work for this fitting.
--spec workers(pid()) -> {ok, [ring_idx()]} | gone.
+-spec workers(pid()) -> {ok, [riak_pipe_vnode:partition()]} | gone.
 workers(Fitting) ->
     try 
         {ok, gen_fsm:sync_send_all_state_event(Fitting, workers)}
@@ -119,7 +119,7 @@ workers(Fitting) ->
 %%      abnormally (which happens if another fitting exist
 %%      abnormally).
 -spec init([pid() | #fitting_spec{} | #fitting{}
-            | [riak_pipe:exec_option()]]) ->
+            | riak_pipe:exec_opts()]) ->
          {ok, wait_upstream_eoi, #state{}}.
 init([Builder,
       #fitting_spec{name=Name, module=Module, arg=Arg, partfun=PartFun},
@@ -180,7 +180,7 @@ wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
 %%      eoi has been sent, if handoff causes the worker to relocate.
 %%      In this case, the fitting simply demonitors the vnode, and
 %%      removes it from its worker list.
--spec wait_upstream_eoi({get_details, ring_idx(), pid()},
+-spec wait_upstream_eoi({get_details, riak_pipe_vnode:partition(), pid()},
                         term(), #state{}) ->
          {reply, {ok, #fitting_details{}}, wait_upstream_eoi, #state{}};
                        ({done, pid()}, term(), #state{}) ->
@@ -217,7 +217,7 @@ wait_upstream_eoi({done, Pid}=M, _From, State) ->
 %%      If the fitting receives a request for details from a vnode
 %%      while in this state, it responds with the detail as usual,
 %%      but also immediately sends end-of-inputs to that vnode.
--spec wait_workers_done({get_details, ring_idx(), pid()},
+-spec wait_workers_done({get_details, riak_pipe_vnode:partition(), pid()},
                         term(), #state{}) ->
          {reply, {ok, #fitting_details{}}, wait_workers_done, #state{}};
                        ({done, pid()}, term(), #state{}) ->
@@ -262,7 +262,7 @@ handle_event(_Event, StateName, State) ->
 %%      this fittings details (i.e. that are doing work for this
 %%      fitting).
 -spec handle_sync_event(workers, term(), atom(), #state{}) ->
-         {reply, [ring_idx()], atom(), #state{}}.
+         {reply, [riak_pipe_vnode:partition()], atom(), #state{}}.
 handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     Partitions = [ P || #worker{partition=P} <- Workers ],
     {reply, Partitions, StateName, State};
@@ -324,7 +324,7 @@ forward_eoi(#state{details=Details}) ->
     riak_pipe_fitting:eoi(Details#fitting_details.output).
 
 %% @doc Monitor the given vnode, and add it to our list of workers.
--spec add_worker(ring_idx(), pid(), #state{}) -> #state{}.
+-spec add_worker(riak_pipe_vnode:partition(), pid(), #state{}) -> #state{}.
 add_worker(Partition, Pid, State) ->
     %% check if we're already monitoring this pid before setting up a
     %% new monitor (in case pid re-requests details)
@@ -342,7 +342,7 @@ add_worker(Partition, Pid, State) ->
 
 %% @doc Find a worker's entry in the worker list by its ring
 %%      partition index and pid.
--spec worker_by_partpid(ring_idx(), pid(), #state{}) ->
+-spec worker_by_partpid(riak_pipe_vnode:partition(), pid(), #state{}) ->
          {ok, #worker{}} | none.
 worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
     case [ W || #worker{partition=A, pid=I}=W <- Workers,
