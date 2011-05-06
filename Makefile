@@ -65,7 +65,7 @@ archive = if [ -d ".git" ]; then \
 
 buildtar = mkdir distdir && \
 		 git clone . distdir/riak_pipe-clone && \
-		 cd distdir/riak-clone && \
+		 cd distdir/riak_pipe-clone && \
 		 git checkout $(RIAK_TAG) && \
 		 $(call archive,$(RIAK_TAG),..) && \
 		 mkdir ../$(RIAK_TAG)/deps && \

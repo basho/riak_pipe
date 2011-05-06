@@ -2,4 +2,6 @@
 ebin/*
 .eunit/*
 doc/*
+deps/*
+erl_crash.dump
 
