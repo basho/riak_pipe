@@ -804,9 +804,9 @@ handoff_cmd_internal(?FOLD_REQ{foldfun=Fold, acc0=Acc}, Sender,
 archive_fitting(F, State) ->
     {ok, W} = worker_by_fitting(F, State),
     send_archive(W),
-    State#state{workers=remove_worker(W, State),
-                workers_archiving=[W#worker{state={working, archive}}
-                                   |State#state.workers_archiving]}.
+    CleanState = remove_worker(W, State),
+    CleanState#state{workers_archiving=[W#worker{state={working, archive}}
+                                        |State#state.workers_archiving]}.
 
 %% @doc A worker finished archiving, and sent the archive back to the
 %%      vnode.  Evaluate the handoff fold function, and remove the
