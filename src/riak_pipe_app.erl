@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Start and stop handling of the =riak_pipe= application.
+%% @doc Start and stop handling of the `riak_pipe' application.
 
 -module(riak_pipe_app).
 
