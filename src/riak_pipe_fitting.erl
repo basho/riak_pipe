@@ -57,6 +57,7 @@
 
 -opaque state() :: #state{}.
 
+-export_type([details/0]).
 -type details() :: #fitting_details{}.
 
 %%%===================================================================
@@ -422,7 +423,7 @@ validate_argument(Module, Arg) ->
 %% @doc Validate the parition-choice function.  This must either be
 %%      the atom `follow', or a valid funtion of arity 1 (see {@link
 %%      riak_pipe_v:validate_function/3}).
--spec validate_partfun(follow | riak_pipe:partfun()) ->
+-spec validate_partfun(follow | riak_pipe_vnode:partfun()) ->
          ok | {error, string()}.
 validate_partfun(follow) ->
     ok;

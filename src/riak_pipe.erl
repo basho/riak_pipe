@@ -72,6 +72,9 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-export_type([fitting/0,
+              fitting_spec/0,
+              exec_opts/0]).
 -type fitting() :: #fitting{}.
 -type fitting_spec() :: #fitting_spec{}.
 -type exec_opts() :: [exec_option()].

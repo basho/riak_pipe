@@ -48,6 +48,8 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
+-export_type([partfun/0,
+              partition/0]). %% from riak_core_vnode.hrl
 -type partfun() :: fun((term()) -> partition()) | follow | sink.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
