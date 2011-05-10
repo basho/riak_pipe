@@ -35,7 +35,8 @@
          handoff_finished/2,
          handle_handoff_data/2,
          encode_handoff_item/2,
-         handle_exit/3]).
+         handle_exit/3,
+         handle_info/2]).
 -export([queue_work/2,
          queue_work/3,
          eoi/2,
@@ -382,17 +383,13 @@ delete(#state{workers=[]}=State) ->
 terminate(_Reason, _State) ->
     ok.
 
-%% @doc Handle an 'EXIT' message from a linked process.
+%% @doc Handle an 'EXIT' message from a worker process.
 %%
-%%      If the linked process was a worker that died normally after
-%%      receiving end-of-inputs and emptying its queue, send `done' to
-%%      the fitting, and remove the worker's entry in the vnodes list.
+%%      If the worker died normally after receiving end-of-inputs and
+%%      emptying its queue, send `done' to the fitting, and remove the
+%%      worker's entry in the vnodes list.
 %%
-%%      If the linked process was a worker that died abnormally,
-%%      attempt to restart it.
-%%
-%%      If the linked process was a fitting, kill the worker associated
-%%      with that fitting and dispose of its queue.
+%%      If the worker died abnormally, attempt to restart it.
 -spec handle_exit(pid(), term(), state()) -> {noreply, state()}.
 handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
     NewState = case worker_by_pid(Pid, State) of
@@ -410,22 +407,35 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                                restart_worker(Worker, State)
                        end;
                    none ->
-                       case worker_by_fitting_pid(Pid, State) of
-                           {ok, Worker} ->
-                               ?T(Worker#worker.details, [error],
-                                  {vnode, {fitting_died, Partition}}),
-                               %% if the fitting died, tear down its worker
-                               erlang:unlink(Worker#worker.pid),
-                               erlang:exit(Worker#worker.pid, fitting_died),
-                               remove_worker(Worker, State);
-                           none ->
-                               %% TODO: log this somewhere?
-                               %% don't know what this pid is
-                               %% may be old worker DOWN passing in flight
-                               State
-                       end
+                       %% TODO: log this somewhere?
+                       %% don't know what this pid is
+                       %% may be old worker EXIT passing in flight
+                       State
                end,
     {noreply, NewState}.
+
+%% @doc Handle a 'DOWN' message from a fitting process. Kill the
+%%      worker associated with that fitting and dispose of its queue.
+-spec handle_info(term(), state()) -> {ok, state()}.
+handle_info({'DOWN',_,process,Pid,_}, #state{partition=Partition}=State) ->
+    NewState = case worker_by_fitting_pid(Pid, State) of
+                   {ok, Worker} ->
+                       ?T(Worker#worker.details, [error],
+                          {vnode, {fitting_died, Partition}}),
+                       %% if the fitting died, tear down its worker
+                       erlang:unlink(Worker#worker.pid),
+                       erlang:exit(Worker#worker.pid, fitting_died),
+                       remove_worker(Worker, State);
+                   none ->
+                       %% TODO: log this somewhere?
+                       %% don't know what this pid is
+                       %% may be old worker DOWN passing in flight
+                       State
+               end,
+    {ok, NewState};
+handle_info(_,State) ->
+    %% unknown message
+    {ok, State}.
 
 %% internal
 
@@ -485,19 +495,16 @@ worker_for(Fitting, #state{workers=Workers, worker_limit=Limit}=State) ->
     end.
 
 %% @doc Start a new worker for the given `Fitting'.  This function
-%%      requests the details from the fitting process, links to the
-%%      fitting process (TODO: as soon as vnodes can receive 'DOWN',
-%%      use links), starts and links the worker process, and sets up
-%%      the queues for it.
+%%      requests the details from the fitting process, monitors the
+%%      fitting process, starts and links the worker process, and sets
+%%      up the queues for it.
 -spec new_worker(riak_pipe:fitting(), state()) ->
          {ok, #worker{}} | worker_startup_failed.
 new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
     try
-        %% TODO: would prefer to :monitor here instead of :link, but
-        %% riak_core_vnode only handles 'EXIT' messages
         case riak_pipe_fitting:get_details(Fitting, P) of
             {ok, Details} ->
-                erlang:link(Fitting#fitting.pid),
+                erlang:monitor(process, Fitting#fitting.pid),
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
                 erlang:link(Pid),
