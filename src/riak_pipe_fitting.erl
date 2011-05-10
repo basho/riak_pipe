@@ -144,9 +144,6 @@ init([Builder,
     
     ?T(Details, [], {fitting, init_started}),
 
-    %% TODO: fix riak_core_vnode to pass DOWN to handle_down
-    process_flag(trap_exit, true),
-
     erlang:link(Builder),
     riak_pipe_builder:fitting_started(Builder, Fitting),
 
@@ -277,35 +274,17 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-%% @doc The non-gen_fsm messages that this process expects are 'DOWN'
-%%      and 'EXIT'.
+%% @doc The non-gen_fsm message that this process expects is 'DOWN'.
 %%
 %%      'DOWN' messages are received when monitored vnodes exit.  In
 %%      that case, the vnode is removed from the worker list.
-%%
-%%      'EXIT' messages are received in two cases, neither desired.
-%%      In one case, they are delivered when vnodes doing work for
-%%      this fitting exit, because the vnode API did not support
-%%      receiving 'DOWN' messages when these modules were written, so
-%%      the vnodes were forced to link to fittings instead of
-%%      monitoring them.  In the second case, 'EXIT' messages are
-%%      delivered when the builder exits.  This fitting would rather
-%%      just die when the builder dies, but it needs to trap exits to
-%%      prevent dying when the unfortunately linked vnodes die. (TODO)
 -spec handle_info({'DOWN', reference(), term(), term(), term()},
                   atom(), state()) ->
-         {next_state, atom(), state()};
-                 ({'EXIT', pid(), term()}, atom(), state()) ->
-         {stop, builder_exited, state()} % when this *should* die
-       | {next_state, atom(), state()}.  % when this *should not* die
+         {next_state, atom(), state()}.
 handle_info({'DOWN', Ref, _, _, _}, StateName, State) ->
     Rest = lists:keydelete(Ref, #worker.monitor, State#state.workers),
     %% TODO: timeout in case we were waiting for 'done'
     {next_state, StateName, State#state{workers=Rest}};
-handle_info({'EXIT', Builder, _}, _StateName, #state{builder=Builder}=S) ->
-    %% TODO: this will be unnecessary when not trapping exits for
-    %%       vnode monitoring
-    {stop, builder_exited, S};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
