@@ -53,7 +53,8 @@
                  monitor :: reference()}).
 -record(state, {builder :: pid(),
                 details :: #fitting_details{},
-                workers :: [#worker{}]}).
+                workers :: [#worker{}],
+                ref :: reference()}). %% to avoid digging two levels
 
 -opaque state() :: #state{}.
 
@@ -80,8 +81,8 @@ start_link(Builder, Spec, Output, Options) ->
 -spec eoi(riak_pipe:fitting()) -> ok.
 eoi(#fitting{partfun=sink}=Sink) ->
     riak_pipe:eoi(Sink);
-eoi(#fitting{pid=Pid}) ->
-    gen_fsm:send_event(Pid, eoi).
+eoi(#fitting{pid=Pid, ref=Ref}) ->
+    gen_fsm:send_event(Pid, {eoi, Ref}).
 
 %% @doc Request the details about this fitting.  The ring parition
 %%      index of the vnode requesting the details is included such
@@ -91,10 +92,9 @@ eoi(#fitting{pid=Pid}) ->
 %%      a pid to monitor.
 -spec get_details(riak_pipe:fitting(), riak_pipe_vnode:partition()) ->
          {ok, details()} | gone.
-get_details(Fitting, Partition) ->
+get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
     try
-        gen_fsm:sync_send_event(Fitting#fitting.pid,
-                                {get_details, Partition, self()})
+        gen_fsm:sync_send_event(Pid, {get_details, Ref, Partition, self()})
     catch exit:{noproc,_} ->
             gone
     end.
@@ -104,8 +104,8 @@ get_details(Fitting, Partition) ->
 %%      that `self()' can be used to inform the fitting of which
 %%      worker is done.
 -spec worker_done(riak_pipe:fitting()) -> ok.
-worker_done(Fitting) ->
-    gen_fsm:sync_send_event(Fitting#fitting.pid, {done, self()}).
+worker_done(#fitting{pid=Pid, ref=Ref}) ->
+    gen_fsm:sync_send_event(Pid, {done, Ref, self()}).
 
 %% @doc Get the list of ring partition indexes (vnodes) that are doing
 %%      work for this fitting.
@@ -133,7 +133,7 @@ init([Builder,
       Output,
       Options]) ->
     Fitting = #fitting{pid=self(),
-                       ref=make_ref(),
+                       ref=Output#fitting.ref,
                        partfun=PartFun},
     Details = #fitting_details{fitting=Fitting,
                                name=Name,
@@ -150,7 +150,8 @@ init([Builder,
     ?T(Details, [], {fitting, init_finished}),
 
     {ok, wait_upstream_eoi,
-     #state{builder=Builder, details=Details, workers=[]}}.
+     #state{builder=Builder, details=Details, workers=[],
+            ref=Output#fitting.ref}}.
 
 %% @doc The fitting is just hanging out, serving details and waiting
 %%      for end-of-inputs.
@@ -162,16 +163,21 @@ init([Builder,
 -spec wait_upstream_eoi(eoi, state()) ->
          {stop, normal, state()}
        | {next_state, wait_workers_done, state()}.
-wait_upstream_eoi(eoi, #state{workers=[], details=Details}=State) ->
+wait_upstream_eoi({eoi, Ref},
+                  #state{ref=Ref, workers=[], details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
     %% no workers to stop
     forward_eoi(State),
     {stop, normal, State};
-wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
+wait_upstream_eoi({eoi, Ref},
+                  #state{ref=Ref, workers=Workers, details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
     [ riak_pipe_vnode:eoi(Pid, Details#fitting_details.fitting)
       || #worker{pid=Pid} <- Workers ],
-    {next_state, wait_workers_done, State}.
+    {next_state, wait_workers_done, State};
+wait_upstream_eoi(_, State) ->
+    %% unknown message - ignore
+    {next_state, wait_upstream_eoi, State}.
 
 
 %% @doc The fitting is just hanging out, serving details and waiting
@@ -189,14 +195,15 @@ wait_upstream_eoi(eoi, #state{workers=Workers, details=Details}=State) ->
          {reply, {ok, details()}, wait_upstream_eoi, state()};
                        ({done, pid()}, term(), state()) ->
          {reply, ok, wait_upstream_eoi, state()}.
-wait_upstream_eoi({get_details, Partition, Pid}=M, _From, State) ->
+wait_upstream_eoi({get_details, Ref, Partition, Pid}=M, _From,
+                  #state{ref=Ref}=State) ->
     ?T(State#state.details, [get_details], {fitting, M}),
     NewState = add_worker(Partition, Pid, State),
     {reply,
      {ok, State#state.details},
      wait_upstream_eoi,
      NewState};
-wait_upstream_eoi({done, Pid}=M, _From, State) ->
+wait_upstream_eoi({done, Ref, Pid}=M, _From, #state{ref=Ref}=State) ->
     %% handoff caused early done
     ?T(State#state.details, [done], {early_fitting, M}),
     case lists:keytake(Pid, #worker.pid, State#state.workers) of
@@ -207,7 +214,10 @@ wait_upstream_eoi({done, Pid}=M, _From, State) ->
     end,
     %% don't check for empty Rest like in wait_workers_done, though
     %% because we haven't seen eoi yet
-    {reply, ok, wait_upstream_eoi, State#state{workers=Rest}}.
+    {reply, ok, wait_upstream_eoi, State#state{workers=Rest}};
+wait_upstream_eoi(_, _, State) ->
+    %% unknown message - reply {error, unknown} to get rid of it
+    {reply, {error, unknown}, wait_upstream_eoi, State}.
 
 %% @doc The fitting has forwarded the end-of-inputs signal to all of
 %%      the vnodes working for it, and is waiting for done responses.
@@ -227,7 +237,8 @@ wait_upstream_eoi({done, Pid}=M, _From, State) ->
                        ({done, pid()}, term(), state()) ->
          {reply, ok, wait_workers_done, state()}
        | {stop, normal, ok, state()}.
-wait_workers_done({get_details, Partition, Pid}=M, _From, State) ->
+wait_workers_done({get_details, Ref, Partition, Pid}=M, _From,
+                  #state{ref=Ref}=State) ->
     %% handoff caused a late get_details
     ?T(State#state.details, [get_details], {late_fitting, M}),
     %% send details, and monitor as usual
@@ -239,7 +250,7 @@ wait_workers_done({get_details, Partition, Pid}=M, _From, State) ->
      {ok, NewState#state.details},
      wait_workers_done,
      NewState};
-wait_workers_done({done, Pid}=M, _From, State) ->
+wait_workers_done({done, Ref, Pid}=M, _From, #state{ref=Ref}=State) ->
     ?T(State#state.details, [done], {fitting, M}),
     case lists:keytake(Pid, #worker.pid, State#state.workers) of
         {value, Worker, Rest} ->
@@ -253,7 +264,10 @@ wait_workers_done({done, Pid}=M, _From, State) ->
             {stop, normal, ok, State#state{workers=[]}};
         _ ->
             {reply, ok, wait_workers_done, State#state{workers=Rest}}
-    end.
+    end;
+wait_workers_done(_, _, State) ->
+    %% unknown message - reply {error, unknown} to get rid of it
+    {reply, {error, unknown}, wait_workers_done, State}.
 
 %% @doc Unused.
 -spec handle_event(term(), atom(), state()) ->

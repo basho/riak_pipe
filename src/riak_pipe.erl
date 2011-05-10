@@ -180,7 +180,13 @@ ensure_sink(Options) ->
                                  _ ->
                                      Sink
                              end,
-                    {PFSink, lists:keyreplace(sink, 1, Options, PFSink)};
+                    RPFSink = case PFSink#fitting.ref of
+                                  undefined ->
+                                      PFSink#fitting{ref=make_ref()};
+                                  _ ->
+                                      PFSink
+                              end,
+                    {RPFSink, lists:keyreplace(sink, 1, Options, RPFSink)};
                true ->
                     throw({invalid_sink, nopid})
             end;

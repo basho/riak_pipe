@@ -181,17 +181,16 @@ queue_work(#fitting{partfun=PartFun}=Fitting, Input) ->
 %%      works for.
 -spec queue_work(riak_pipe:fitting(), term(), partition()) ->
          ok | {error, worker_limit_reached | worker_startup_failed}.
-queue_work(Fitting, Input, PartitionOverride) ->
+queue_work(#fitting{ref=Ref}=Fitting, Input, PartitionOverride) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(Ring, PartitionOverride),
-    ReplyRef = make_ref(),
     riak_core_vnode_master:command(
       {PartitionOverride, Owner},
       #cmd_enqueue{fitting=Fitting, input=Input},
-      {raw, ReplyRef, self()},
+      {raw, Ref, self()},
       riak_pipe_vnode_master),
     %% block until input confirmed queued, for backpressure
-    receive {ReplyRef, Reply} -> Reply end.
+    receive {Ref, Reply} -> Reply end.
 
 %% @doc Send end-of-inputs for a fitting to a vnode.  Note: this
 %%      should only be called by `riak_pipe_fitting' processes.  This
