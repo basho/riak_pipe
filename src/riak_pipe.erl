@@ -32,8 +32,7 @@
 %%                               partfun=fun(_) -> 0 end}],
 %%
 %% % start things up
-%% {ok, Builder, Sink} = riak_pipe:exec(PipelineSpec),
-%% {ok, Head} = riak_pipe:wait_first_fitting(Builder),
+%% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec),
 %%
 %% % send in some work
 %% riak_pipe_vnode:queue_work(Head, "work item 1"),
@@ -55,7 +54,6 @@
 
 %% client API
 -export([exec/2,
-         wait_first_fitting/1,
          receive_result/1,
          collect_results/1]).
 %% worker/fitting API
@@ -84,10 +82,8 @@
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
-%%      handle to the builder and the sink.  Calling code should then
-%%      call `wait_first_fitting(Builder)' to get the lead fitting.
-%%      Inputs may then be sent to vnodes, tagged with that lead
-%%      fitting.
+%%      handle to the head (first) fitting and the sink.  Inputs may
+%%      then be sent to vnodes, tagged with that head fitting.
 %%
 %%      The pipeline is specified as an ordered list of
 %%      `#fitting_spec{}' records.  Each record has the fields:
@@ -149,22 +145,13 @@
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
 -spec exec([fitting_spec()], exec_opts()) ->
-         {ok, Builder::riak_pipe_builder:builder(), Sink::fitting()}.
+         {ok, Head::fitting(), Sink::fitting()}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
     {Sink, SinkOptions} = ensure_sink(Options),
     TraceOptions = correct_trace(SinkOptions),
-    {ok, Pid, Builder} = riak_pipe_builder_sup:new_pipeline(
-                           Spec, TraceOptions),
-    erlang:link(Pid),
-    {ok, Builder, Sink}.
-
-%% @doc Ask the pipeline builder for the handle of the first fitting.
-%%      This handle may be used to queue work on vnodes.  The
-%%      builder's handle was returned from the call to {@link exec/2}.
--spec wait_first_fitting(riak_pipe_builder:builder()) -> {ok, fitting()}.
-wait_first_fitting(Builder) ->
-    riak_pipe_builder:get_first_fitting(Builder).
+    {ok, Head} = riak_pipe_builder_sup:new_pipeline(Spec, TraceOptions),
+    {ok, Head, Sink}.
 
 %% @doc Ensure that the `{sink, Sink}' exec/2 option is defined
 %%      correctly, or define a fresh one pointing to the current
@@ -325,8 +312,7 @@ collect_results(Fitting, ResultAcc, LogAcc) ->
 %% '''
 -spec example() -> {eoi | timeout, list(), list()}.
 example() ->
-    {ok, Builder, Sink} = example_start(),
-    {ok, Head} = wait_first_fitting(Builder),
+    {ok, Head, Sink} = example_start(),
     example_send(Head),
     example_receive(Sink).
 
@@ -334,7 +320,7 @@ example() ->
 %%      "pass" fitting.  Sink is pointed at the current process.
 %%      Logging is pointed at the sink.  All tracing is enabled.
 -spec example_start() ->
-         {ok, Builder::riak_pipe_builder:builder(), Sink::fitting()}.
+         {ok, Head::fitting(), Sink::fitting()}.
 example_start() ->
     riak_pipe:exec(
       [#fitting_spec{name=empty_pass,
@@ -375,14 +361,13 @@ example_transform() ->
                        FittingDetails),
                      ok
              end,
-    {ok, Builder, Sink} =
+    {ok, Head, Sink} =
         riak_pipe:exec(
           [#fitting_spec{name="sum transform",
                          module=riak_pipe_w_xform,
                          arg=SumFun,
                          partfun=fun(_) -> 0 end}],
           []),
-    {ok, Head} = wait_first_fitting(Builder),
     ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
     riak_pipe_fitting:eoi(Head),
     example_receive(Sink).
@@ -401,14 +386,13 @@ example_reduce() ->
     SumFun = fun(_Key, Inputs, _Partition, _FittingDetails) ->
                      {ok, [lists:sum(Inputs)]}
              end,
-    {ok, Builder, Sink} =
+    {ok, Head, Sink} =
         riak_pipe:exec(
           [#fitting_spec{name="sum reduce",
                          module=riak_pipe_w_reduce,
                          arg=SumFun,
                          partfun=fun riak_pipe_w_reduce:partfun/1}],
           []),
-    {ok, Head} = wait_first_fitting(Builder),
     [ok,ok,ok,ok,ok] =
         [ riak_pipe_vnode:queue_work(Head, {a, N})
           || N <- lists:seq(1, 5) ],

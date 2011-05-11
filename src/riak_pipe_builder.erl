@@ -30,7 +30,7 @@
 %% API
 -export([start_link/2]).
 -export([fitting_pids/1,
-         get_first_fitting/1]).
+         get_first_fitting/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -45,13 +45,11 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
--export_type([builder/0]).
 -record(state, {options :: riak_pipe:exec_opts(),
                 ref :: reference(),
                 alive :: [{#fitting{}, reference()}]}). % monitor ref
 
 -opaque state() :: #state{}.
--opaque builder() :: {pid(), reference()}.
 
 %%%===================================================================
 %%% API
@@ -59,12 +57,12 @@
 
 %% @doc Start a builder to setup the pipeline described by `Spec'.
 -spec start_link([riak_pipe:fitting_spec()], riak_pipe:exec_opts()) ->
-         {ok, pid(), builder()} | ignore | {error, term()}.
+         {ok, pid(), reference()} | ignore | {error, term()}.
 start_link(Spec, Options) ->
     case gen_fsm:start_link(?MODULE, [Spec, Options], []) of
         {ok, Pid} ->
             {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
-            {ok, Pid, {Pid, Ref}};
+            {ok, Pid, Ref};
         Error ->
             Error
     end.
@@ -83,8 +81,8 @@ fitting_pids(Builder) ->
 %% @doc Get the `#fitting{}' record describing the lead fitting in
 %%      this builder's pipeline.  This function will block until the
 %%      builder has finished building the pipeline.
--spec get_first_fitting(builder()) -> {ok, riak_pipe:fitting()}.
-get_first_fitting({BuilderPid, Ref}) ->
+-spec get_first_fitting(pid(), reference()) -> {ok, riak_pipe:fitting()}.
+get_first_fitting(BuilderPid, Ref) ->
     gen_fsm:sync_send_event(BuilderPid, {get_first_fitting, Ref}).
 
 %%%===================================================================

@@ -76,7 +76,7 @@ starting these fitting processes.  It begins by starting a "builder"
 process, which then starts and monitors each of the fitting processes,
 starting with the final one (so that its =pid= can be passed to its
 predecessor).  When all of the fitting processes have started, the
-=pid= of the first is sent to the client.
+=pid= of the first is returned to the client.
 
 ** Send inputs
 
@@ -218,11 +218,10 @@ the pipeline as a whole.  Currently supported options are:
             one of their types matches one of the types listed.  If
             left undefined, all trace messages are ignored silently.
 
-The =riak_pipe:exec/2= function will return a tuple of the form
-={ok, Builder, Sink}=.  To get the head fitting of the pipeline,
-immediately call =riak_pipe:wait_first_fitting(Builder)=.  The
-=wait_first_fitting/1= function will return a tuple of the form
-={ok, HeadFitting}=.
+The =riak_pipe:exec/2= function will return a tuple of the form ={ok,
+Head, Sink}=, =Head= being the tag you'll use to send inputs into the
+start of the pipeline, and =Sink= being details about where output is
+sent.
 
 *** Sending inputs
 
@@ -230,7 +229,6 @@ Once you have the first fitting, you can send inputs to it using
 =riak_pipe_vnode:queue_work/2=:
 
 #+BEGIN_SRC erlang
-{ok, Head} = riak_pipe:wait_first_fitting(Builder),
 riak_pipe_vnode:queue_work(Head, "please process this list").
 #+END_SRC
 
