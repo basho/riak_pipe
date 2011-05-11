@@ -55,9 +55,9 @@ pipelines(C) ->
 -spec pipeline(ClusterInfoHandle::term(), Builder::pid()) -> ok.
 pipeline(C, Pipe) ->
     case riak_pipe_builder:fitting_pids(Pipe) of
-        {ok, {UnstartedCount, Fits}} ->
-            cluster_info:format(C, " - ~p fittings: ~b unstarted, ~b alive~n",
-                                [Pipe, UnstartedCount, length(Fits)]),
+        {ok, Fits} ->
+            cluster_info:format(C, " - ~p fittings: ~b alive~n",
+                                [Pipe, length(Fits)]),
             [ fitting(C, Fit) || Fit <- Fits ];
         gone ->
             cluster_info:format(C, " - ~p *gone*~n", [Pipe])

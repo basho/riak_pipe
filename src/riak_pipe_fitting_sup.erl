@@ -50,7 +50,7 @@ start_link() ->
                   riak_pipe:fitting_spec(),
                   riak_pipe:fitting(),
                   riak_pipe:exec_opts()) ->
-         {ok, pid()}.
+         {ok, pid(), riak_pipe:fitting()}.
 add_fitting(Builder, Spec, Output, Options) ->
     ?DPF("Adding fitting for ~p", [Spec]),
     supervisor:start_child(?SERVER, [Builder, Spec, Output, Options]).

@@ -72,9 +72,14 @@
                  riak_pipe:fitting_spec(),
                  riak_pipe:fitting(),
                  riak_pipe:exec_opts()) ->
-         {ok, pid()} | ignore | {error, term()}.
+         {ok, pid(), riak_pipe:fitting()} | ignore | {error, term()}.
 start_link(Builder, Spec, Output, Options) ->
-    gen_fsm:start_link(?MODULE, [Builder, Spec, Output, Options], []).
+    case gen_fsm:start_link(?MODULE, [Builder, Spec, Output, Options], []) of
+        {ok, Pid} ->
+            {ok, Pid, fitting_record(Pid, Spec, Output)};
+        Error ->
+            Error
+    end.
 
 %% @doc Send an end-of-inputs message to the specified fitting
 %%      process (possibly the sink).
@@ -129,12 +134,10 @@ workers(Fitting) ->
             | riak_pipe:exec_opts()]) ->
          {ok, wait_upstream_eoi, state()}.
 init([Builder,
-      #fitting_spec{name=Name, module=Module, arg=Arg, partfun=PartFun},
+      #fitting_spec{name=Name, module=Module, arg=Arg}=Spec,
       Output,
       Options]) ->
-    Fitting = #fitting{pid=self(),
-                       ref=Output#fitting.ref,
-                       partfun=PartFun},
+    Fitting = fitting_record(self(), Spec, Output),
     Details = #fitting_details{fitting=Fitting,
                                name=Name,
                                module=Module,
@@ -145,7 +148,6 @@ init([Builder,
     ?T(Details, [], {fitting, init_started}),
 
     erlang:link(Builder),
-    riak_pipe_builder:fitting_started(Builder, Fitting),
 
     ?T(Details, [], {fitting, init_finished}),
 
@@ -316,6 +318,15 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% @doc Construct a #fitting{} record, given this fitting's pid spec,
+%%      and output.
+-spec fitting_record(pid(),
+                     Spec::riak_pipe:fitting_spec(),
+                     Output::riak_pipe:fitting()) ->
+         riak_pipe:fitting().
+fitting_record(Pid, #fitting_spec{partfun=PartFun}, #fitting{ref=Ref}) ->
+    #fitting{pid=Pid, ref=Ref, partfun=PartFun}.
 
 %% @doc Send the end-of-inputs signal to the next fitting.
 -spec forward_eoi(state()) -> ok.
