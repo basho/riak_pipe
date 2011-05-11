@@ -49,12 +49,15 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-export_type([builder/0]).
 -record(state, {options :: riak_pipe:exec_opts(),
+                ref :: reference(),
                 unstarted :: [#fitting_spec{}],
                 alive :: [{#fitting{}, reference()}], % monitor ref
                 waiting :: [term()]}). % gen_fsm From reply handles
 
 -opaque state() :: #state{}.
+-opaque builder() :: {pid(), reference()}.
 
 %%%===================================================================
 %%% API
@@ -62,9 +65,15 @@
 
 %% @doc Start a builder to setup the pipeline described by `Spec'.
 -spec start_link([riak_pipe:fitting_spec()], riak_pipe:exec_opts()) ->
-         {ok, pid()} | ignore | {error, term()}.
+         {ok, pid(), builder()} | ignore | {error, term()}.
 start_link(Spec, Options) ->
-    gen_fsm:start_link(?MODULE, [Spec, Options], []).
+    case gen_fsm:start_link(?MODULE, [Spec, Options], []) of
+        {ok, Pid} ->
+            {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
+            {ok, Pid, {Pid, Ref}};
+        Error ->
+            Error
+    end.
 
 %% @doc Notify the `Builder' that the fitting has completed its
 %%      startup and is described by `Fitting'.  The value of `Fitting'
@@ -87,9 +96,9 @@ fitting_pids(Builder) ->
 %% @doc Get the `#fitting{}' record describing the lead fitting in
 %%      this builder's pipeline.  This function will block until the
 %%      builder has finished building the pipeline.
--spec get_first_fitting(pid()) -> {ok, riak_pipe:fitting()}.
-get_first_fitting(Builder) ->
-    gen_fsm:sync_send_event(Builder, get_first_fitting).
+-spec get_first_fitting(builder()) -> {ok, riak_pipe:fitting()}.
+get_first_fitting({BuilderPid, Ref}) ->
+    gen_fsm:sync_send_event(BuilderPid, {get_first_fitting, Ref}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -99,9 +108,11 @@ get_first_fitting(Builder) ->
 -spec init([ [riak_pipe:fitting_spec()] | riak_pipe:exec_opts() ]) ->
          {ok, start_first_fitting, state(), 0}.
 init([Spec, Options]) ->
+    {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
     {ok, start_first_fitting,
      #state{unstarted=lists:reverse(Spec),
             options=Options,
+            ref=Ref,
             alive=[],
             waiting=[]},
      0}.
@@ -154,25 +165,34 @@ wait_pipeline_shutdown(_Event, State) ->
 
 %% @doc A client is asking for the head fitting, but that fitting
 %%      hasn't started yet.  Delay response for later.
--spec wait_fitting_start(get_first_fitting, term(), state()) ->
+-spec wait_fitting_start({get_first_fitting, reference()},
+                         term(), state()) ->
          {next_state, wait_fitting_start, state()}.
-wait_fitting_start(get_first_fitting, From,
-                   #state{waiting=Waiting}=State) ->
+wait_fitting_start({get_first_fitting, Ref}, From,
+                   #state{ref=Ref, waiting=Waiting}=State) ->
             %% something still unstarted
             %% reply once everything else is up
     {next_state, wait_fitting_start,
-     State#state{waiting=[From|Waiting]}}.
+     State#state{waiting=[From|Waiting]}};
+wait_fitting_start(_, _, State) ->
+    %% unknown message - reply {error, unknown} to get rid of it
+    {reply, {error, unknown}, wait_fitting_start, State}.
 
 %% @doc A client is asking for the head fitting.  Respond.
--spec wait_pipeline_shutdown(get_first_fitting, term(), state()) ->
+-spec wait_pipeline_shutdown({get_first_fitting, reference()},
+                             term(), state()) ->
          {reply,
           {ok, riak_pipe:fitting()},
           wait_pipeline_shutdown,
           state()}.
-wait_pipeline_shutdown(get_first_fitting, _From,
-                       #state{alive=[{FirstFitting,_Ref}|_]}=State) ->
+wait_pipeline_shutdown({get_first_fitting, Ref}, _From,
+                       #state{ref=Ref,
+                              alive=[{FirstFitting,_Ref}|_]}=State) ->
     %% everything is started - reply now
-    {reply, {ok, FirstFitting}, wait_pipeline_shutdown, State}.
+    {reply, {ok, FirstFitting}, wait_pipeline_shutdown, State};
+wait_pipeline_shutdown(_, _, State) ->
+    %% unknown message - reply {error, unknown} to get rid of it
+    {reply, {error, unknown}, wait_pipeline_shutdown, State}.
 
 %% @doc Unused.
 -spec handle_event(term(), atom(), state()) ->

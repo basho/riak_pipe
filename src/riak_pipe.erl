@@ -149,19 +149,20 @@
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
 -spec exec([fitting_spec()], exec_opts()) ->
-         {ok, Builder::pid(), Sink::fitting()}.
+         {ok, Builder::riak_pipe_builder:builder(), Sink::fitting()}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
     {Sink, SinkOptions} = ensure_sink(Options),
     TraceOptions = correct_trace(SinkOptions),
-    {ok, Pid} = riak_pipe_builder_sup:new_pipeline(Spec, TraceOptions),
+    {ok, Pid, Builder} = riak_pipe_builder_sup:new_pipeline(
+                           Spec, TraceOptions),
     erlang:link(Pid),
-    {ok, Pid, Sink}.
+    {ok, Builder, Sink}.
 
 %% @doc Ask the pipeline builder for the handle of the first fitting.
 %%      This handle may be used to queue work on vnodes.  The
-%%      builder's pid was returned from the call to {@link exec/2}.
--spec wait_first_fitting(pid()) -> {ok, fitting()}.
+%%      builder's handle was returned from the call to {@link exec/2}.
+-spec wait_first_fitting(riak_pipe_builder:builder()) -> {ok, fitting()}.
 wait_first_fitting(Builder) ->
     riak_pipe_builder:get_first_fitting(Builder).
 
@@ -332,7 +333,8 @@ example() ->
 %% @doc An example of starting a simple pipe.  Starts a pipe with one
 %%      "pass" fitting.  Sink is pointed at the current process.
 %%      Logging is pointed at the sink.  All tracing is enabled.
--spec example_start() -> {ok, Builder::pid(), Sink::fitting()}.
+-spec example_start() ->
+         {ok, Builder::riak_pipe_builder:builder(), Sink::fitting()}.
 example_start() ->
     riak_pipe:exec(
       [#fitting_spec{name=empty_pass,
