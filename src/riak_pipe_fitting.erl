@@ -293,14 +293,32 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% @doc The non-gen_fsm message that this process expects is 'DOWN'.
 %%
 %%      'DOWN' messages are received when monitored vnodes exit.  In
-%%      that case, the vnode is removed from the worker list.
+%%      that case, the vnode is removed from the worker list.  If that
+%%      was also the last vnode we were waiting on a `done' message
+%%      from, also forward `eoi' and shut down the fitting.
 -spec handle_info({'DOWN', reference(), term(), term(), term()},
                   atom(), state()) ->
-         {next_state, atom(), state()}.
+         {next_state, atom(), state()}
+        |{stop, normal, state()}.
 handle_info({'DOWN', Ref, _, _, _}, StateName, State) ->
-    Rest = lists:keydelete(Ref, #worker.monitor, State#state.workers),
-    %% TODO: timeout in case we were waiting for 'done'
-    {next_state, StateName, State#state{workers=Rest}};
+    case lists:keytake(Ref, #worker.monitor, State#state.workers) of
+        {value, Worker, Rest} ->
+            ?T(State#state.details, [done, 'DOWN'],
+               {vnode_failure, Worker#worker.partition}),
+            %% check whether this fitting was just waiting on a final
+            %% 'done' and stop if so (because anything left in that
+            %% vnode's worker queue is lost)
+            case {StateName, Rest} of
+                {wait_workers_done, []} ->
+                    forward_eoi(State),
+                    {stop, normal, State#state{workers=[]}};
+                _ ->
+                    {next_state, StateName, State#state{workers=Rest}}
+            end;
+        false ->
+            %% looks like a misdirected down notification - ignore
+            {next_state, StateName, State}
+    end;
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
