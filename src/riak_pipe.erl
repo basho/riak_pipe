@@ -53,7 +53,9 @@
 -module(riak_pipe).
 
 %% client API
+-ifdef(TEST).
 -export([t/0]). %% SLF: DELME
+-endif.
 -export([exec/2,
          receive_result/1,
          collect_results/1]).
@@ -449,43 +451,69 @@ t() ->
 
 dep_apps() ->
     DelMe = "./EUnit-SASL.log",
+    KillDamnFilterProc = fun() ->
+                                 timer:sleep(5),
+                                 catch exit(whereis(riak_sysmon_filter), kill),
+                                 timer:sleep(5)
+                         end,                                 
     [fun(start) ->
-             application:stop(sasl),
-             application:load(sasl),
+             _ = application:stop(sasl),
+             _ = application:load(sasl),
              put(old_sasl_l, app_helper:get_env(sasl, sasl_error_logger)),
-             application:set_env(sasl, sasl_error_logger, {file, DelMe}),
-             application:start(sasl);
+             ok = application:set_env(sasl, sasl_error_logger, {file, DelMe}),
+             ok = application:start(sasl),
+             error_logger:tty(false);
         (stop) ->
-             application:stop(sasl),
-             application:set_env(sasl, sasl_error_logger, erase(old_sasl_l))
+             ok = application:stop(sasl),
+             ok = application:set_env(sasl, sasl_error_logger, erase(old_sasl_l));
+        (fullstop) ->
+             _ = application:stop(sasl)
      end,
+     %% public_key and ssl are not needed here but started by others so
+     %% stop them when we're done.
+     crypto, public_key, ssl,
      fun(start) ->
-             error_logger:tty(false)
+             ok = application:start(riak_sysmon);
+        (stop) ->
+             ok = application:stop(riak_sysmon),
+             KillDamnFilterProc();
+        (fullstop) ->
+             _ = application:stop(riak_sysmon),
+             KillDamnFilterProc()
      end,
-     crypto, riak_sysmon, webmachine,
+     webmachine,
      fun(start) ->
-             application:load(riak_core),
+             _ = application:load(riak_core),
              put(old_hand_ip, app_helper:get_env(riak_core, handoff_ip)),
              put(old_hand_port, app_helper:get_env(riak_core, handoff_port)),
-             application:set_env(riak_core, handoff_ip, "0.0.0.0"),
-             application:set_env(riak_core, handoff_port, 9183),
-             application:start(riak_core);
+             ok = application:set_env(riak_core, handoff_ip, "0.0.0.0"),
+             ok = application:set_env(riak_core, handoff_port, 9183),
+             ok = application:start(riak_core);
         (stop) ->
-             application:stop(riak_core),
-             application:set_env(riak_core, handoff_ip, get(old_hand_ip)),
-             application:set_env(riak_core, handoff_port, get(old_hand_port))
+             ok = application:stop(riak_core),
+             ok = application:set_env(riak_core, handoff_ip, get(old_hand_ip)),
+             ok = application:set_env(riak_core, handoff_port, get(old_hand_port));
+        (fullstop) ->
+             _ = application:stop(riak_core)
      end,
     riak_pipe].
 
+do_dep_apps(fullstop, Apps) ->
+    lists:map(fun(A) when is_atom(A) -> _ = application:stop(A);
+                 (F)                 -> F(fullstop)
+              end, Apps);
 do_dep_apps(StartStop, Apps) ->
-    lists:map(fun(A) when is_atom(A) -> application:StartStop(A);
-                 (F)                 -> catch F(StartStop)
+    lists:map(fun(A) when is_atom(A) -> ok = application:StartStop(A);
+                 (F)                 -> F(StartStop)
               end, Apps).
 
 doit_test_() ->
     {foreach,
      fun() ->
+             do_dep_apps(fullstop, lists:reverse(dep_apps())),
+             timer:sleep(5),
              do_dep_apps(start, dep_apps()),
+             timer:sleep(5),
              [foo1, foo2]
      end,
      fun(_SetupThingie) ->
