@@ -53,6 +53,7 @@
 -module(riak_pipe).
 
 %% client API
+-export([t/0]). %% SLF: DELME
 -export([exec/2,
          receive_result/1,
          collect_results/1]).
@@ -65,10 +66,15 @@
          example_receive/1,
 
          example_transform/0,
-         example_reduce/0]).
+         example_reduce/0,
+         example_tick/3,
+         example_tick/4]).
 
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -export_type([fitting/0,
               fitting_spec/0,
@@ -407,3 +413,109 @@ example_reduce() ->
           || N <- lists:seq(16, 20) ],
     riak_pipe_fitting:eoi(Head),
     example_receive(Sink).
+
+example_tick(TickLen, NumTicks, ChainLen) ->
+    example_tick(TickLen, 1, NumTicks, ChainLen).
+
+example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
+    {ok, _Ring} = riak_core_ring_manager:get_my_ring(),
+    Specs = [#fitting_spec{name=list_to_atom("tick_pass" ++ integer_to_list(F_num)),
+                           module=riak_pipe_w_pass,
+                           partfun = fun(_) -> 0 end}
+             %% partfun=fun(X) ->
+             %%     DocIdx = riak_core_util:chash_key({X,X}),
+             %%     Nodes = riak_core_node_watcher:nodes(riak_pipe),
+             %%     [{{Part,_},_}] = riak_core_apl:get_apl_ann(
+             %%                        DocIdx, 1, _Ring, Nodes),
+             %%     Part
+             %% end}
+             || F_num <- lists:seq(1, ChainLen)],
+    {ok, Head, Sink} = riak_pipe:exec(Specs, [{log, sink},
+                                              {trace, all}]),
+    [begin
+         [riak_pipe_vnode:queue_work(Head, {tick, {TickSeq, X}, now()}) ||
+             X <- lists:seq(1, BatchSize)],
+         if TickSeq /= NumTicks -> timer:sleep(TickLen);
+            true                -> ok
+         end
+     end || TickSeq <- lists:seq(1, NumTicks)],
+    riak_pipe_fitting:eoi(Head),
+    example_receive(Sink).
+
+-ifdef(TEST).
+
+t() ->
+    eunit:test(?MODULE).
+
+dep_apps() ->
+    DelMe = "./EUnit-SASL.log",
+    [fun(start) ->
+             application:stop(sasl),
+             application:load(sasl),
+             put(old_sasl_l, app_helper:get_env(sasl, sasl_error_logger)),
+             application:set_env(sasl, sasl_error_logger, {file, DelMe}),
+             application:start(sasl);
+        (stop) ->
+             application:stop(sasl),
+             application:set_env(sasl, sasl_error_logger, erase(old_sasl_l))
+     end,
+     fun(start) ->
+             error_logger:tty(false)
+     end,
+     crypto, riak_sysmon, webmachine,
+     fun(start) ->
+             application:load(riak_core),
+             put(old_hand_ip, app_helper:get_env(riak_core, handoff_ip)),
+             put(old_hand_port, app_helper:get_env(riak_core, handoff_port)),
+             application:set_env(riak_core, handoff_ip, "0.0.0.0"),
+             application:set_env(riak_core, handoff_port, 9183),
+             application:start(riak_core);
+        (stop) ->
+             application:stop(riak_core),
+             application:set_env(riak_core, handoff_ip, get(old_hand_ip)),
+             application:set_env(riak_core, handoff_port, get(old_hand_port))
+     end,
+    riak_pipe].
+
+do_dep_apps(StartStop, Apps) ->
+    lists:map(fun(A) when is_atom(A) -> application:StartStop(A);
+                 (F)                 -> catch F(StartStop)
+              end, Apps).
+
+doit_test_() ->
+    {foreach,
+     fun() ->
+             do_dep_apps(start, dep_apps()),
+             [foo1, foo2]
+     end,
+     fun(_SetupThingie) ->
+             do_dep_apps(stop, lists:reverse(dep_apps())),
+             timer:sleep(5)
+     end,
+     [
+      fun(_) ->
+              {"example()",
+               fun() ->
+                       {eoi, [{empty_pass, "hello"}], _Trc} =
+                           ?MODULE:example()
+               end}
+      end,
+      fun(_) ->
+              {"example_transform()",
+               fun() ->
+                       {eoi, [{"sum transform", 55}], []} =
+                           ?MODULE:example_transform()
+               end}
+      end,
+      fun(_) ->
+              {"example_reduce()",
+               fun() ->
+                       {eoi, Res, []} = ?MODULE:example_reduce(),
+                       [{"sum reduce", {a, [55]}},
+                        {"sum reduce", {b, [155]}}] = lists:sort(Res)
+               end}
+      end
+     ]
+    }.
+
+-endif.  % TEST

@@ -217,6 +217,10 @@ send_output(Output, FromPartition,
        | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
+        put(eunit, [{module, ?MODULE},
+                    {partition, Partition},
+                    {VnodePid, VnodePid},
+                    {details, FittingDetails}]),
         {ok, ModState} = Module:init(Partition, FittingDetails),
         {ok, initial_input_request,
          #state{details=FittingDetails,
