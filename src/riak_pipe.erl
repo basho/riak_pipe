@@ -53,9 +53,6 @@
 -module(riak_pipe).
 
 %% client API
--ifdef(TEST).
--export([t/0]). %% SLF: DELME
--endif.
 -export([exec/2,
          receive_result/1,
          collect_results/1]).
@@ -68,9 +65,13 @@
          example_receive/1,
 
          example_transform/0,
+         example_transform/2,
          example_reduce/0,
          example_tick/3,
          example_tick/4]).
+-ifdef(TEST).
+-export([do_dep_apps/1, t/0]).
+-endif.
 
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
@@ -362,6 +363,14 @@ example_receive(Sink) ->
 %% '''
 -spec example_transform() -> {eoi | timeout, list(), list()}.
 example_transform() ->
+    Fun = fun(Head, _Sink) ->
+                  ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
+                  riak_pipe_fitting:eoi(Head),
+                  ok
+          end,
+    example_transform(Fun, []).
+
+example_transform(Fun, ExecOpts) ->
     SumFun = fun(Input, Partition, FittingDetails) ->
                      riak_pipe_vnode_worker:send_output(
                        lists:sum(Input),
@@ -375,9 +384,8 @@ example_transform() ->
                          module=riak_pipe_w_xform,
                          arg=SumFun,
                          partfun=fun(_) -> 0 end}],
-          []),
-    ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
-    riak_pipe_fitting:eoi(Head),
+         ExecOpts),
+    ok = Fun(Head, Sink),
     example_receive(Sink).
 
 %% @doc Another example pipeline use.  This one sets up a simple
@@ -498,28 +506,37 @@ dep_apps() ->
      end,
     riak_pipe].
 
-do_dep_apps(fullstop, Apps) ->
+do_dep_apps(fullstop) ->
     lists:map(fun(A) when is_atom(A) -> _ = application:stop(A);
                  (F)                 -> F(fullstop)
-              end, Apps);
-do_dep_apps(StartStop, Apps) ->
+              end, lists:reverse(dep_apps()));
+do_dep_apps(StartStop) ->
+    Apps = if StartStop == start -> dep_apps();
+              StartStop == stop  -> lists:reverse(dep_apps())
+           end,
     lists:map(fun(A) when is_atom(A) -> ok = application:StartStop(A);
                  (F)                 -> F(StartStop)
               end, Apps).
 
-doit_test_() ->
-    {foreach,
+prepare_runtime() ->
      fun() ->
-             do_dep_apps(fullstop, lists:reverse(dep_apps())),
+             do_dep_apps(fullstop),
              timer:sleep(5),
-             do_dep_apps(start, dep_apps()),
+             do_dep_apps(start),
              timer:sleep(5),
              [foo1, foo2]
-     end,
-     fun(_SetupThingie) ->
-             do_dep_apps(stop, lists:reverse(dep_apps())),
+     end.
+
+teardown_runtime() ->
+     fun(_PrepareThingie) ->
+             do_dep_apps(stop),
              timer:sleep(5)
-     end,
+     end.    
+
+basic_test_() ->
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
      [
       fun(_) ->
               {"example()",
@@ -546,4 +563,31 @@ doit_test_() ->
      ]
     }.
 
+exception_test_() ->
+    XBad1 = fun(Head, _Sink) ->
+                    ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                    ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                    ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
+                    ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
+                    riak_pipe_fitting:eoi(Head),
+                    ok
+           end,
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+     [
+      fun(_) ->
+              {"example_transform(XBad1)",
+               fun() ->
+                       {eoi, Res, Errs} =
+                           example_transform(XBad1, [{log, sink}, {trace, [error]}]),
+                       [{_, 6}, {_, 15}, {_, 33}] = lists:sort(Res),
+                       [{_, {trace, [error], {error, Ps}}}] = Errs,
+                       error = proplists:get_value(type, Ps),
+                       badarith = proplists:get_value(error, Ps),
+                       [7, 8, bummer] = proplists:get_value(input, Ps)
+               end}
+      end
+     ]
+    }.
 -endif.  % TEST
