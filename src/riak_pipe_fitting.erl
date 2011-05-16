@@ -84,7 +84,7 @@ start_link(Builder, Spec, Output, Options) ->
 %% @doc Send an end-of-inputs message to the specified fitting
 %%      process (possibly the sink).
 -spec eoi(riak_pipe:fitting()) -> ok.
-eoi(#fitting{partfun=sink}=Sink) ->
+eoi(#fitting{chashfun=sink}=Sink) ->
     riak_pipe:eoi(Sink);
 eoi(#fitting{pid=Pid, ref=Ref}) ->
     gen_fsm:send_event(Pid, {eoi, Ref}).
@@ -343,8 +343,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
                      Spec::riak_pipe:fitting_spec(),
                      Output::riak_pipe:fitting()) ->
          riak_pipe:fitting().
-fitting_record(Pid, #fitting_spec{partfun=PartFun}, #fitting{ref=Ref}) ->
-    #fitting{pid=Pid, ref=Ref, partfun=PartFun}.
+fitting_record(Pid, #fitting_spec{chashfun=HashFun}, #fitting{ref=Ref}) ->
+    #fitting{pid=Pid, ref=Ref, chashfun=HashFun}.
 
 %% @doc Send the end-of-inputs signal to the next fitting.
 -spec forward_eoi(state()) -> ok.
@@ -385,7 +385,7 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 %%      module (see {@link riak_pipe_v:validate_module/2}), that the
 %%      arg is valid for the module (see {@link validate_argument/2}),
 %%      and that the partition function is of the proper form (see
-%%      {@link validate_partfun/1}).
+%%      {@link validate_chashfun/1}).
 %%
 %%      If all components are valid, the atom `ok' is returned.  If
 %%      any piece is invalid, `badarg' is thrown.
@@ -393,7 +393,7 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,
-                               partfun=PartFun}) ->
+                               chashfun=HashFun}) ->
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
@@ -410,11 +410,11 @@ validate_fitting(#fitting_spec{name=Name,
               [format_name(Name), ArgError]),
             throw(badarg)
     end,
-    case validate_partfun(PartFun) of
+    case validate_chashfun(HashFun) of
         ok -> ok;
         {error, PFError} ->
             error_logger:error_msg(
-              "Invalid partfun in fitting spec \"~s\":~n~s",
+              "Invalid chashfun in fitting spec \"~s\":~n~s",
               [format_name(Name), PFError]),
             throw(badarg)
     end;
@@ -442,15 +442,15 @@ validate_argument(Module, Arg) ->
             ok %% don't force modules to validate their args
     end.
 
-%% @doc Validate the parition-choice function.  This must either be
+%% @doc Validate the consistent hashing function.  This must either be
 %%      the atom `follow', or a valid funtion of arity 1 (see {@link
 %%      riak_pipe_v:validate_function/3}).
--spec validate_partfun(follow | riak_pipe_vnode:partfun()) ->
+-spec validate_chashfun(follow | riak_pipe_vnode:chashfun()) ->
          ok | {error, string()}.
-validate_partfun(follow) ->
+validate_chashfun(follow) ->
     ok;
-validate_partfun(PartFun) ->
-    riak_pipe_v:validate_function("partfun", 1, PartFun).
+validate_chashfun(HashFun) ->
+    riak_pipe_v:validate_function("chashfun", 1, HashFun).
 
 %% @doc Coerce a fitting name into a printable string.
 -spec format_name(term()) -> iolist().

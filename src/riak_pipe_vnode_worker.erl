@@ -193,13 +193,14 @@ send_output(Output, FromPartition,
 send_output(Output, FromPartition,
             #fitting_details{name=Name}=_Details,
             FittingOverride) ->
-    case FittingOverride#fitting.partfun of
+    case FittingOverride#fitting.chashfun of
         sink ->
             riak_pipe:result(Name, FittingOverride, Output),
             ok;
         follow ->
             ok = riak_pipe_vnode:queue_work(
-                   FittingOverride, Output, FromPartition);
+                   FittingOverride, Output,
+                   riak_pipe_vnode:hash_for_partition(FromPartition));
         _ ->
             ok = riak_pipe_vnode:queue_work(FittingOverride, Output)
     end.

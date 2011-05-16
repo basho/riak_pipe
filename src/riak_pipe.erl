@@ -29,7 +29,7 @@
 %% % define the pipeline
 %% PipelineSpec = [#fitting_spec{name="passer"
 %%                               module=riak_pipe_w_pass,
-%%                               partfun=fun(_) -> 0 end}],
+%%                               chashfun=fun chash:key_of/1}],
 %%
 %% % start things up
 %% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec),
@@ -103,13 +103,15 @@
 %%      module's initialization function.  This is a good way to
 %%      parameterize general fittings.
 %%</dd><dt>
-%%     `partfun'
+%%     `chashfun'
 %%</dt><dd>
-%%      A function of arity 1.  Used to determine which vnode should
-%%      receive an input.  This function will be evaluated as
-%%      `Fun(Input)'.  The result of that evaluation should be a
-%%      partition index, which will be used to find the owning node in
-%%      a `riak_core_ring'.
+%%      A function of arity 1.  The consistent-hashing function used
+%%      to determine which vnode should receive an input.  This
+%%      function will be evaluated as `Fun(Input)'.  The result of
+%%      that evaluation should be a binary, 160 bits in length, which
+%%      will be used to choose the working vnode from a
+%%      `riak_core_ring'.  (Very similar to the `chash_keyfun' bucket
+%%      property used in `riak_kv'.)
 %%</dd></dl>
 %%
 %%      Defined elements of the `Options' list are:
@@ -162,24 +164,24 @@ ensure_sink(Options) ->
     case lists:keyfind(sink, 1, Options) of
         {sink, #fitting{pid=Pid}=Sink} ->
             if is_pid(Pid) ->
-                    PFSink = case Sink#fitting.partfun of
+                    HFSink = case Sink#fitting.chashfun of
                                  undefined ->
-                                     Sink#fitting{partfun=sink};
+                                     Sink#fitting{chashfun=sink};
                                  _ ->
                                      Sink
                              end,
-                    RPFSink = case PFSink#fitting.ref of
+                    RHFSink = case HFSink#fitting.ref of
                                   undefined ->
-                                      PFSink#fitting{ref=make_ref()};
+                                      HFSink#fitting{ref=make_ref()};
                                   _ ->
-                                      PFSink
+                                      HFSink
                               end,
-                    {RPFSink, lists:keyreplace(sink, 1, Options, RPFSink)};
+                    {RHFSink, lists:keyreplace(sink, 1, Options, RHFSink)};
                true ->
                     throw({invalid_sink, nopid})
             end;
         false ->
-            Sink = #fitting{pid=self(), ref=make_ref(), partfun=sink},
+            Sink = #fitting{pid=self(), ref=make_ref(), chashfun=sink},
             {Sink, [{sink, Sink}|Options]};
         _ ->
             throw({invalid_sink, not_fitting})
@@ -325,7 +327,7 @@ example_start() ->
     riak_pipe:exec(
       [#fitting_spec{name=empty_pass,
                      module=riak_pipe_w_pass,
-                     partfun=fun(_) -> 0 end}],
+                     chashfun=fun(_) -> <<0:160/integer>> end}],
       [{log, sink},
        {trace, all}]).
 
@@ -366,7 +368,7 @@ example_transform() ->
           [#fitting_spec{name="sum transform",
                          module=riak_pipe_w_xform,
                          arg=SumFun,
-                         partfun=fun(_) -> 0 end}],
+                         chashfun=fun(_) -> <<0:160/integer>> end}],
           []),
     ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
     riak_pipe_fitting:eoi(Head),
@@ -391,7 +393,7 @@ example_reduce() ->
           [#fitting_spec{name="sum reduce",
                          module=riak_pipe_w_reduce,
                          arg=SumFun,
-                         partfun=fun riak_pipe_w_reduce:partfun/1}],
+                         chashfun=fun riak_pipe_w_reduce:chashfun/1}],
           []),
     [ok,ok,ok,ok,ok] =
         [ riak_pipe_vnode:queue_work(Head, {a, N})

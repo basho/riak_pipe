@@ -19,9 +19,9 @@
 %% -------------------------------------------------------------------
 
 %% @doc Simple pass-thru fitting.  Just passes its input directly to
-%%      its output.  This fitting should work with any
-%%      partition-choice function.  It ignores its argument, and
-%%      requires no archiving for handoff.
+%%      its output.  This fitting should work with any consistent-hash
+%%      function.  It ignores its argument, and requires no archiving
+%%      for handoff.
 -module(riak_pipe_w_pass).
 -behaviour(riak_pipe_vnode_worker).
 

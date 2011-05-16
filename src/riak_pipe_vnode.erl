@@ -43,15 +43,17 @@
          next_input/2,
          reply_archive/3,
          status/1]).
+-export([hash_for_partition/1]).
 
 -include_lib("riak_core/include/riak_core_vnode.hrl"). %% ?FOLD_REQ
 -include("riak_pipe.hrl").
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
--export_type([partfun/0,
+-export_type([chashfun/0,
               partition/0]). %% from riak_core_vnode.hrl
--type partfun() :: fun((term()) -> partition()) | follow | sink.
+-type chashfun() :: fun((term()) -> chash()) | follow | sink.
+-type chash() :: chash:index().
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
@@ -152,40 +154,51 @@ init([Partition]) ->
        workers_archiving=[]
       }}.
 
-%% @doc Get a ring partition index for any local vnode.  Used to
+%% @doc Get hash value in a range owned by any local vnode.  Used to
 %%      semi-randomly choose a local vnode if the spec for the head
-%%      fitting of a pipeline uses a partition-choice function of
+%%      fitting of a pipeline uses a consistent-hashing function of
 %%      `follow'.
--spec any_local_vnode() -> partition().
+-spec any_local_vnode() -> chash().
 any_local_vnode() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    hd(riak_core_ring:my_indices(Ring)).
+    hash_for_partition(hd(riak_core_ring:my_indices(Ring))).
+
+%% @doc Produce a hash value in the range handled by the given
+%%      partition.  Used to support the `follow' chashfun.
+-spec hash_for_partition(partition()) -> chash().
+hash_for_partition(0) ->
+    <<(trunc(math:pow(2,160))-1):160/integer>>;
+hash_for_partition(I) ->
+    %% partition indices indicate the *last* point
+    %% in the hash space they own
+    <<(I-1):160/integer>>.
 
 %% @doc Queue the given `Input' for processing by the `Fitting'.  This
 %%      function handles getting the input to the correct vnode by
-%%      evaluating the fitting's partition-choice function (`partfun')
-%%      on the input.
+%%      evaluating the fitting's consistent-hashing function
+%%      (`chashfun') on the input.
 -spec queue_work(riak_pipe:fitting(), term()) ->
          ok | {error, worker_limit_reached | worker_startup_failed}.
-queue_work(#fitting{partfun=follow}=Fitting, Input) ->
+queue_work(#fitting{chashfun=follow}=Fitting, Input) ->
     %% this should only happen if someone sets up a pipe with
-    %% the first fitting as partfun=follow
+    %% the first fitting as chashfun=follow
     queue_work(Fitting, Input, any_local_vnode());
-queue_work(#fitting{partfun=PartFun}=Fitting, Input) ->
-    queue_work(Fitting, Input, PartFun(Input)).
+queue_work(#fitting{chashfun=HashFun}=Fitting, Input) ->
+    queue_work(Fitting, Input, HashFun(Input)).
 
 %% @doc Queue the given `Input' for processing the the `Fitting' on
-%%      the vnode specified by `PartitionOverride'.  This version of
-%%      the function is used to support the `follow' partfun, by
-%%      allowing a worker to send the input directly to the vnode it
-%%      works for.
--spec queue_work(riak_pipe:fitting(), term(), partition()) ->
+%%      the vnode specified by `Hash'.  This version of the function
+%%      is used to support the `follow' chashfun, by allowing a worker
+%%      to send the input directly to the vnode it works for.
+-spec queue_work(riak_pipe:fitting(), term(), chash()) ->
          ok | {error, worker_limit_reached | worker_startup_failed}.
-queue_work(#fitting{ref=Ref}=Fitting, Input, PartitionOverride) ->
+queue_work(#fitting{ref=Ref}=Fitting, Input, Hash) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Owner = riak_core_ring:index_owner(Ring, PartitionOverride),
+    Nodes = riak_core_node_watcher:nodes(riak_pipe),
+    [{{Partition, Node},_}|_] =
+        riak_core_apl:get_apl_ann(Hash, 1, Ring, Nodes),
     riak_core_vnode_master:command(
-      {PartitionOverride, Owner},
+      {Partition, Node},
       #cmd_enqueue{fitting=Fitting, input=Input},
       {raw, Ref, self()},
       riak_pipe_vnode_master),

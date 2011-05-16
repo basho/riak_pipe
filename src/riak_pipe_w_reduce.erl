@@ -65,12 +65,12 @@
 %% end
 %% '''
 %%
-%%      The preferred partition-choice function for this fitting is
-%%      {@link partfun/1}.  It chooses a partition based on the hash
-%%      of the input `Key'.  Any other partition function should work,
-%%      but beware that a function that sends values for the same
-%%      `Key' to different partitions will result in fittings down the
-%%      pipe receiving multiple results for the `Key'.
+%%      The preferred consistent-hash function for this fitting is
+%%      {@link chashfun/1}.  It hashes the input `Key'.  Any other
+%%      partition function should work, but beware that a function
+%%      that sends values for the same `Key' to different partitions
+%%      will result in fittings down the pipe receiving multiple
+%%      results for the `Key'.
 %%
 %%      This fitting produces as its archive, the store of evaluation
 %%      results for the keys it has seen.  To merge handoff values,
@@ -85,7 +85,7 @@
          archive/1,
          handoff/2,
          validate_arg/1]).
--export([partfun/1]).
+-export([chashfun/1]).
 
 -include("riak_pipe.hrl").
 
@@ -185,11 +185,8 @@ validate_arg(Fun) ->
     {error, io_lib:format("~p requires a function as argument, not a ~p",
                           [?MODULE, riak_pipe_v:type_of(Fun)])}.
 
-%% @doc The preferred partition function.  Chooses a partition based
+%% @doc The preferred hashing function.  Chooses a partition based
 %%      on the hash of the `Key'.
--spec partfun({term(), term()}) -> riak_pipe_vnode:partition().
-partfun({Key,_}) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    DocIdx = chash:key_of(Key),
-    [{Partition, _}|_] = riak_core_ring:preflist(DocIdx, Ring),
-    Partition.
+-spec chashfun({term(), term()}) -> riak_pipe_vnode:chash().
+chashfun({Key,_}) ->
+    chash:key_of(Key).

@@ -2,7 +2,7 @@
         {
           pid :: pid(),
           ref :: reference(),
-          partfun :: riak_pipe_vnode:partfun()
+          chashfun :: riak_pipe_vnode:chashfun()
         }).
 
 -record(fitting_details,
@@ -20,7 +20,7 @@
           name :: term(),
           module :: atom(),
           arg :: term(),
-          partfun :: riak_pipe_vnode:partfun()
+          chashfun :: riak_pipe_vnode:chashfun()
         }).
 
 -record(pipe_result,
