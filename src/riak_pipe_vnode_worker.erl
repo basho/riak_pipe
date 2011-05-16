@@ -122,8 +122,10 @@
         ]).
 
 -include("riak_pipe.hrl").
+-include("riak_pipe_log.hrl").
 
--record(state, {details :: riak_pipe_fitting:details(),
+-record(state, {partition :: riak_pipe_vnode:partition(),
+                details :: riak_pipe_fitting:details(),
                 vnode :: pid(),
                 modstate :: term()}).
 -opaque state() :: #state{}.
@@ -217,9 +219,14 @@ send_output(Output, FromPartition,
        | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
+        put(eunit, [{module, ?MODULE},
+                    {partition, Partition},
+                    {VnodePid, VnodePid},
+                    {details, FittingDetails}]),
         {ok, ModState} = Module:init(Partition, FittingDetails),
         {ok, initial_input_request,
-         #state{details=FittingDetails,
+         #state{partition=Partition,
+                details=FittingDetails,
                 vnode=VnodePid,
                 modstate=ModState},
          0}
@@ -327,8 +334,27 @@ request_input(#state{vnode=Vnode, details=Details}) ->
 -spec process_input(term(), state()) -> state().
 process_input(Input, #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
-    {ok, NewModState} = Module:process(Input, ModState),
-    State#state{modstate=NewModState}.
+    try
+        {ok, NewModState} = Module:process(Input, ModState),
+        State#state{modstate=NewModState}
+    catch Type:Error ->
+            processing_error(Type, Error, FD, ModState, Module, State, Input),
+            State
+    end.            
+
+%% @private
+processing_error(Type, Error, FD, ModState, Module, State, Input) ->
+    Fields = record_info(fields, fitting_details),
+    FieldPos = lists:zip(Fields, lists:seq(2, length(Fields)+1)),
+    DsList = [{Field, element(Pos, FD)} || {Field, Pos} <- FieldPos],
+    ?T_ERR(FD, [{module, Module},
+                {partition, State#state.partition},
+                {details, DsList},
+                {type, Type},
+                {error, Error},
+                {input, Input},
+                {modstate, ModState},
+                {stack, erlang:get_stacktrace()}]).
 
 %% @doc Process a done (end-of-inputs) message - call the implementing
 %%      module's `done/1' function.

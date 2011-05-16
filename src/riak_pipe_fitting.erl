@@ -151,6 +151,10 @@ init([Builder,
 
     ?T(Details, [], {fitting, init_finished}),
 
+    put(eunit, [{module, ?MODULE},
+                {fitting, Fitting},
+                {details, Details},
+                {builder, Builder}]),
     {ok, wait_upstream_eoi,
      #state{builder=Builder, details=Details, workers=[],
             ref=Output#fitting.ref}}.
