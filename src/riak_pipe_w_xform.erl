@@ -50,6 +50,7 @@
          validate_arg/1]).
 
 -include("riak_pipe.hrl").
+-include("riak_pipe_log.hrl").
 
 -record(state, {p :: riak_pipe_vnode:partition(),
                 fd :: riak_pipe_fitting:details()}).
@@ -65,14 +66,7 @@ init(Partition, FittingDetails) ->
 -spec process(term(), state()) -> {ok, state()}.
 process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
     Fun = FittingDetails#fitting_details.arg,
-    try
-        ok = Fun(Input, Partition, FittingDetails)
-    catch Type:Error ->
-            %%TODO: forward
-            error_logger:info_msg("~p:~p xforming:~n   ~P~n   ~P",
-                                  [Type, Error, Input, 3,
-                                   erlang:get_stacktrace(), 5])
-    end,
+    ok = Fun(Input, Partition, FittingDetails),
     {ok, State}.
 
 %% @doc Unused.

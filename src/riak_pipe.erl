@@ -65,10 +65,19 @@
          example_receive/1,
 
          example_transform/0,
-         example_reduce/0]).
+         example_transform/2,
+         example_reduce/0,
+         example_tick/3,
+         example_tick/4]).
+-ifdef(TEST).
+-export([do_dep_apps/1, t/0]).
+-endif.
 
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -export_type([fitting/0,
               fitting_spec/0,
@@ -354,6 +363,14 @@ example_receive(Sink) ->
 %% '''
 -spec example_transform() -> {eoi | timeout, list(), list()}.
 example_transform() ->
+    Fun = fun(Head, _Sink) ->
+                  ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
+                  riak_pipe_fitting:eoi(Head),
+                  ok
+          end,
+    example_transform(Fun, []).
+
+example_transform(Fun, ExecOpts) ->
     SumFun = fun(Input, Partition, FittingDetails) ->
                      riak_pipe_vnode_worker:send_output(
                        lists:sum(Input),
@@ -367,9 +384,8 @@ example_transform() ->
                          module=riak_pipe_w_xform,
                          arg=SumFun,
                          partfun=fun(_) -> 0 end}],
-          []),
-    ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
-    riak_pipe_fitting:eoi(Head),
+         ExecOpts),
+    ok = Fun(Head, Sink),
     example_receive(Sink).
 
 %% @doc Another example pipeline use.  This one sets up a simple
@@ -407,3 +423,171 @@ example_reduce() ->
           || N <- lists:seq(16, 20) ],
     riak_pipe_fitting:eoi(Head),
     example_receive(Sink).
+
+example_tick(TickLen, NumTicks, ChainLen) ->
+    example_tick(TickLen, 1, NumTicks, ChainLen).
+
+example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
+    {ok, _Ring} = riak_core_ring_manager:get_my_ring(),
+    Specs = [#fitting_spec{name=list_to_atom("tick_pass" ++ integer_to_list(F_num)),
+                           module=riak_pipe_w_pass,
+                           partfun = fun(_) -> 0 end}
+             %% partfun=fun(X) ->
+             %%     DocIdx = riak_core_util:chash_key({X,X}),
+             %%     Nodes = riak_core_node_watcher:nodes(riak_pipe),
+             %%     [{{Part,_},_}] = riak_core_apl:get_apl_ann(
+             %%                        DocIdx, 1, _Ring, Nodes),
+             %%     Part
+             %% end}
+             || F_num <- lists:seq(1, ChainLen)],
+    {ok, Head, Sink} = riak_pipe:exec(Specs, [{log, sink},
+                                              {trace, all}]),
+    [begin
+         [riak_pipe_vnode:queue_work(Head, {tick, {TickSeq, X}, now()}) ||
+             X <- lists:seq(1, BatchSize)],
+         if TickSeq /= NumTicks -> timer:sleep(TickLen);
+            true                -> ok
+         end
+     end || TickSeq <- lists:seq(1, NumTicks)],
+    riak_pipe_fitting:eoi(Head),
+    example_receive(Sink).
+
+-ifdef(TEST).
+
+t() ->
+    eunit:test(?MODULE).
+
+dep_apps() ->
+    DelMe = "./EUnit-SASL.log",
+    KillDamnFilterProc = fun() ->
+                                 timer:sleep(5),
+                                 catch exit(whereis(riak_sysmon_filter), kill),
+                                 timer:sleep(5)
+                         end,                                 
+    [fun(start) ->
+             _ = application:stop(sasl),
+             _ = application:load(sasl),
+             put(old_sasl_l, app_helper:get_env(sasl, sasl_error_logger)),
+             ok = application:set_env(sasl, sasl_error_logger, {file, DelMe}),
+             ok = application:start(sasl),
+             error_logger:tty(false);
+        (stop) ->
+             ok = application:stop(sasl),
+             ok = application:set_env(sasl, sasl_error_logger, erase(old_sasl_l));
+        (fullstop) ->
+             _ = application:stop(sasl)
+     end,
+     %% public_key and ssl are not needed here but started by others so
+     %% stop them when we're done.
+     crypto, public_key, ssl,
+     fun(start) ->
+             ok = application:start(riak_sysmon);
+        (stop) ->
+             ok = application:stop(riak_sysmon),
+             KillDamnFilterProc();
+        (fullstop) ->
+             _ = application:stop(riak_sysmon),
+             KillDamnFilterProc()
+     end,
+     webmachine,
+     fun(start) ->
+             _ = application:load(riak_core),
+             put(old_hand_ip, app_helper:get_env(riak_core, handoff_ip)),
+             put(old_hand_port, app_helper:get_env(riak_core, handoff_port)),
+             ok = application:set_env(riak_core, handoff_ip, "0.0.0.0"),
+             ok = application:set_env(riak_core, handoff_port, 9183),
+             ok = application:start(riak_core);
+        (stop) ->
+             ok = application:stop(riak_core),
+             ok = application:set_env(riak_core, handoff_ip, get(old_hand_ip)),
+             ok = application:set_env(riak_core, handoff_port, get(old_hand_port));
+        (fullstop) ->
+             _ = application:stop(riak_core)
+     end,
+    riak_pipe].
+
+do_dep_apps(fullstop) ->
+    lists:map(fun(A) when is_atom(A) -> _ = application:stop(A);
+                 (F)                 -> F(fullstop)
+              end, lists:reverse(dep_apps()));
+do_dep_apps(StartStop) ->
+    Apps = if StartStop == start -> dep_apps();
+              StartStop == stop  -> lists:reverse(dep_apps())
+           end,
+    lists:map(fun(A) when is_atom(A) -> ok = application:StartStop(A);
+                 (F)                 -> F(StartStop)
+              end, Apps).
+
+prepare_runtime() ->
+     fun() ->
+             do_dep_apps(fullstop),
+             timer:sleep(5),
+             do_dep_apps(start),
+             timer:sleep(5),
+             [foo1, foo2]
+     end.
+
+teardown_runtime() ->
+     fun(_PrepareThingie) ->
+             do_dep_apps(stop),
+             timer:sleep(5)
+     end.    
+
+basic_test_() ->
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+     [
+      fun(_) ->
+              {"example()",
+               fun() ->
+                       {eoi, [{empty_pass, "hello"}], _Trc} =
+                           ?MODULE:example()
+               end}
+      end,
+      fun(_) ->
+              {"example_transform()",
+               fun() ->
+                       {eoi, [{"sum transform", 55}], []} =
+                           ?MODULE:example_transform()
+               end}
+      end,
+      fun(_) ->
+              {"example_reduce()",
+               fun() ->
+                       {eoi, Res, []} = ?MODULE:example_reduce(),
+                       [{"sum reduce", {a, [55]}},
+                        {"sum reduce", {b, [155]}}] = lists:sort(Res)
+               end}
+      end
+     ]
+    }.
+
+exception_test_() ->
+    XBad1 = fun(Head, _Sink) ->
+                    ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                    ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                    ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
+                    ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
+                    riak_pipe_fitting:eoi(Head),
+                    ok
+           end,
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+     [
+      fun(_) ->
+              {"example_transform(XBad1)",
+               fun() ->
+                       {eoi, Res, Errs} =
+                           example_transform(XBad1, [{log, sink}, {trace, [error]}]),
+                       [{_, 6}, {_, 15}, {_, 33}] = lists:sort(Res),
+                       [{_, {trace, [error], {error, Ps}}}] = Errs,
+                       error = proplists:get_value(type, Ps),
+                       badarith = proplists:get_value(error, Ps),
+                       [7, 8, bummer] = proplists:get_value(input, Ps)
+               end}
+      end
+     ]
+    }.
+-endif.  % TEST
