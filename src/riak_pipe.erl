@@ -32,7 +32,7 @@
 %%                               partfun=fun(_) -> 0 end}],
 %%
 %% % start things up
-%% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec),
+%% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec, []),
 %%
 %% % send in some work
 %% riak_pipe_vnode:queue_work(Head, "work item 1"),
