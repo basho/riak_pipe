@@ -33,6 +33,9 @@
          workers/1]).
 -export([validate_fitting/1,
          format_name/1]).
+-ifdef(TEST).
+-export([crash/2]).
+-endif.
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -121,6 +124,13 @@ workers(Fitting) ->
     catch exit:{noproc, _} ->
             gone
     end.
+
+-ifdef(TEST).
+crash(#fitting{pid=Pid}, Fun) ->
+    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun});
+crash(Pid, Fun) ->
+    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun}).
+-endif.
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -290,6 +300,9 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     Partitions = [ P || #worker{partition=P} <- Workers ],
     {reply, Partitions, StateName, State};
+handle_sync_event({test_crash, Fun},_,_,_) ->
+    %% Only test-enabled client sends this.
+    Fun();
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
@@ -472,8 +485,6 @@ format_name(Name) ->
 -spec is_iolist(term()) -> boolean().
 is_iolist(Name) when is_list(Name) ->
     lists:all(fun is_iolist/1, Name);
-is_iolist(Name) when is_binary(Name) ->
-    true;
 is_iolist(Name) when is_integer(Name), Name >= 0, Name =< 255 ->
     true;
 is_iolist(_) ->

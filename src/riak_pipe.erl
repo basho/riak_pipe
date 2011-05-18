@@ -55,7 +55,9 @@
 %% client API
 -export([exec/2,
          receive_result/1,
-         collect_results/1]).
+         receive_result/2,
+         collect_results/1,
+         collect_results/2]).
 %% worker/fitting API
 -export([result/3, eoi/1, log/3]).
 %% examples
@@ -65,7 +67,7 @@
          example_receive/1,
 
          example_transform/0,
-         example_transform/2,
+         generic_transform/4,
          example_reduce/0,
          example_tick/3,
          example_tick/4]).
@@ -253,7 +255,15 @@ eoi(#fitting{pid=Pid, ref=Ref}) ->
        | {log, {From::term(), Message::term()}}
        | eoi
        | timeout.
-receive_result(#fitting{ref=Ref}) ->
+receive_result(Fitting) ->
+    receive_result(Fitting, 5000).
+
+-spec receive_result(Sink::fitting(), Timeout::integer() | 'infinity') ->
+         {result, {From::term(), Result::term()}}
+       | {log, {From::term(), Message::term()}}
+       | eoi
+       | timeout.
+receive_result(#fitting{ref=Ref}, Timeout) ->
     receive
         #pipe_result{ref=Ref, from=From, result=Result} ->
             {result, {From, Result}};
@@ -261,7 +271,7 @@ receive_result(#fitting{ref=Ref}) ->
             {log, {From, Msg}};
         #pipe_eoi{ref=Ref} ->
             eoi
-    after 5000 ->
+    after Timeout ->
             timeout
     end.
 
@@ -288,23 +298,31 @@ receive_result(#fitting{ref=Ref}) ->
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
 collect_results(#fitting{}=Fitting) ->
-    collect_results(Fitting, [], []).
+    collect_results(Fitting, [], [], 5000).
+
+-spec collect_results(Sink::fitting(), Timeout::integer() | 'infinity') ->
+          {eoi | timeout,
+           Results::[{From::term(), Result::term()}],
+           Logs::[{From::term(), Message::term()}]}.
+collect_results(#fitting{}=Fitting, Timeout) ->
+    collect_results(Fitting, [], [], Timeout).
 
 %% @doc Internal implementation of collect_results/1.  Just calls
 %%      receive_result/1, and accumulates lists of result and log
 %%      messages.
 -spec collect_results(Sink::fitting(),
                       ResultAcc::[{From::term(), Result::term()}],
-                      LogAcc::[{From::term(), Result::term()}]) ->
+                      LogAcc::[{From::term(), Result::term()}],
+                      Timeout::integer() | 'infinity') ->
           {eoi | timeout,
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
-collect_results(Fitting, ResultAcc, LogAcc) ->
-    case receive_result(Fitting) of
+collect_results(Fitting, ResultAcc, LogAcc, Timeout) ->
+    case receive_result(Fitting, Timeout) of
         {result, {From, Result}} ->
-            collect_results(Fitting, [{From,Result}|ResultAcc], LogAcc);
+            collect_results(Fitting, [{From,Result}|ResultAcc], LogAcc, Timeout);
         {log, {From, Result}} ->
-            collect_results(Fitting, ResultAcc, [{From,Result}|LogAcc]);
+            collect_results(Fitting, ResultAcc, [{From,Result}|LogAcc], Timeout);
         End ->
             %% result order shouldn't matter,
             %% but it's useful to have logging output in time order
@@ -363,29 +381,31 @@ example_receive(Sink) ->
 %% '''
 -spec example_transform() -> {eoi | timeout, list(), list()}.
 example_transform() ->
-    Fun = fun(Head, _Sink) ->
-                  ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
-                  riak_pipe_fitting:eoi(Head),
-                  ok
-          end,
-    example_transform(Fun, []).
+    MsgFun = fun lists:sum/1,
+    DriverFun = fun(Head, _Sink) ->
+                        ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
+                        riak_pipe_fitting:eoi(Head),
+                        ok
+                end,
+    generic_transform(MsgFun, DriverFun, [], 1).
 
-example_transform(Fun, ExecOpts) ->
-    SumFun = fun(Input, Partition, FittingDetails) ->
-                     riak_pipe_vnode_worker:send_output(
-                       lists:sum(Input),
-                       Partition,
-                       FittingDetails),
-                     ok
-             end,
+generic_transform(MsgFun, DriverFun, ExecOpts, NumFittings) ->
+    MsgFunThenSendFun = fun(Input, Partition, FittingDetails) ->
+                                riak_pipe_vnode_worker:send_output(
+                                  MsgFun(Input),
+                                  Partition,
+                                  FittingDetails),
+                                ok
+                        end,
     {ok, Head, Sink} =
         riak_pipe:exec(
-          [#fitting_spec{name="sum transform",
-                         module=riak_pipe_w_xform,
-                         arg=SumFun,
-                         partfun=fun(_) -> 0 end}],
-         ExecOpts),
-    ok = Fun(Head, Sink),
+          lists:duplicate(NumFittings,
+                          #fitting_spec{name="generic transform",
+                                        module=riak_pipe_w_xform,
+                                        arg=MsgFunThenSendFun,
+                                        partfun=fun(_) -> 0 end}),
+          ExecOpts),
+    ok = DriverFun(Head, Sink),
     example_receive(Sink).
 
 %% @doc Another example pipeline use.  This one sets up a simple
@@ -453,6 +473,16 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
     example_receive(Sink).
 
 -ifdef(TEST).
+
+extract_trace_errors(Trace) ->
+    [Ps || {_, {trace, [error], {error, Ps}}} <- Trace].
+
+extract_fitting_died_errors(Trace) ->
+    [X || {_, {trace, [error], {vnode, {fitting_died, _}} = X}} <- Trace].
+
+kill_all_pipe_vnodes() ->
+    [exit(VNode, kill) ||
+        VNode <- riak_core_vnode_master:all_nodes(riak_pipe_vnode)].
 
 t() ->
     eunit:test(?MODULE).
@@ -548,7 +578,7 @@ basic_test_() ->
       fun(_) ->
               {"example_transform()",
                fun() ->
-                       {eoi, [{"sum transform", 55}], []} =
+                       {eoi, [{"generic transform", 55}], []} =
                            ?MODULE:example_transform()
                end}
       end,
@@ -564,6 +594,10 @@ basic_test_() ->
     }.
 
 exception_test_() ->
+    AllLog = [{log, sink}, {trace, [error]}],
+    DecrOrCrashFun = fun(0) -> exit(blastoff);
+                        (N) -> N - 1
+                     end,
     XBad1 = fun(Head, _Sink) ->
                     ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
                     ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
@@ -572,22 +606,264 @@ exception_test_() ->
                     riak_pipe_fitting:eoi(Head),
                     ok
            end,
+    XBad2 =
+        fun(Head, _Sink) ->
+                [ok = riak_pipe_vnode:queue_work(Head, N) ||
+                    N <- lists:seq(0,2)],
+                ok = riak_pipe_vnode:queue_work(Head, 500),
+                exit({success_so_far, collect_results(_Sink, 100)})
+        end,
+    TailWorkerCrash =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, 100),
+                timer:sleep(100),
+                ok = riak_pipe_vnode:queue_work(Head, 1),
+                riak_pipe_fitting:eoi(Head),
+                ok
+        end,
+    VnodeCrash =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, 100),
+                timer:sleep(100),
+                kill_all_pipe_vnodes(),
+                timer:sleep(100),
+                riak_pipe_fitting:eoi(Head),
+                ok
+        end,
+    HeadFittingCrash =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                (catch riak_pipe_fitting:crash(Head, fun() -> exit(die) end)),
+                {error, worker_startup_failed} =
+                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                %% Again, just for fun ... still fails
+                {error, worker_startup_failed} =
+                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                exit({success_so_far, collect_results(_Sink, 100)})
+        end,
+    MiddleFittingNormal =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, 20),
+                timer:sleep(100),
+                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
+                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
+
+                %% Aside: exercise riak_pipe_fitting:workers/1.
+                %% There's a single worker on vnode 0, whee.
+                {ok, [0]} = riak_pipe_fitting:workers(hd(FittingPids)),
+
+                %% Aside: send fitting bogus messages
+                gen_fsm:send_event(hd(FittingPids), bogus_message),
+                {error, unknown} =
+                    gen_fsm:sync_send_event(hd(FittingPids), bogus_message),
+                gen_fsm:sync_send_all_state_event(hd(FittingPids), bogus_message),
+                hd(FittingPids) ! bogus_message,
+
+                %% Aside: send bogus done message
+                MyRef = Head#fitting.ref,
+                ok = gen_fsm:sync_send_event(hd(FittingPids),
+                                             {done, MyRef, asdf}),
+
+                Third = lists:nth(3, FittingPids),
+                (catch riak_pipe_fitting:crash(Third, fun() -> exit(normal) end)),
+                Fourth = lists:nth(4, FittingPids),
+                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(normal) end)),
+                %% This message will be lost in the middle of the pipe,
+                %% but we'll be able to notice it via extract_trace_errors/1.
+                ok = riak_pipe_vnode:queue_work(Head, 30),
+                exit({success_so_far, collect_results(_Sink, 100)})
+        end,
+    MiddleFittingCrash =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, 20),
+                timer:sleep(100),
+                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
+                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
+                Third = lists:nth(3, FittingPids),
+                (catch riak_pipe_fitting:crash(Third, fun() -> exit(diedie) end)),
+                Fourth = lists:nth(4, FittingPids),
+                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(diedie) end)),
+                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
+                {error,worker_startup_failed} =
+                    riak_pipe_vnode:queue_work(Head, 30),
+                riak_pipe_fitting:eoi(Head),
+                exit({success_so_far, collect_results(_Sink, 100)})
+        end,
+    %% TODO: It isn't clear to me if TailFittingCrash is really any different
+    %%       than MiddleFittingCrash.  I'm trying to exercise the patch in
+    %%       commit cb0447f3c46 but am not having much luck.  {sigh}
+    TailFittingCrash =
+        fun(Head, _Sink) ->
+                ok = riak_pipe_vnode:queue_work(Head, 20),
+                timer:sleep(100),
+                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
+                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
+                Last = lists:last(FittingPids),
+                (catch riak_pipe_fitting:crash(Last, fun() -> exit(diedie) end)),
+                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
+                {error,worker_startup_failed} =
+                    riak_pipe_vnode:queue_work(Head, 30),
+                riak_pipe_fitting:eoi(Head),
+                exit({success_so_far, collect_results(_Sink, 100)})
+        end,
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+     [fun(_) ->
+              {"generic_transform(XBad1)",
+               fun() ->
+                       {eoi, Res, Trace} =
+                           generic_transform(fun lists:sum/1, XBad1, AllLog, 1),
+                       [{_, 6}, {_, 15}, {_, 33}] = lists:sort(Res),
+                       [{_, {trace, [error], {error, Ps}}}] = Trace,
+                       error = proplists:get_value(type, Ps),
+                       badarith = proplists:get_value(error, Ps),
+                       [7, 8, bummer] = proplists:get_value(input, Ps)
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(XBad2)",
+               fun() ->
+                       {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
+                           (catch generic_transform(DecrOrCrashFun,
+                                                    XBad2,
+                                                    AllLog, 3)),
+                       [{_, 497}] = Res,
+                       3 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(TailWorkerCrash)",
+               fun() ->
+                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                                                             TailWorkerCrash,
+                                                             AllLog, 2),
+                       [{_, 98}] = Res,
+                       1 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(VnodeCrash)",
+               fun() ->
+                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                                                             VnodeCrash,
+                                                             AllLog, 2),
+                       [{_, 98}] = Res,
+                       0 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(HeadFittingCrash)",
+               fun() ->
+                       {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
+                           (catch generic_transform(fun lists:sum/1,
+                                                    HeadFittingCrash,
+                                                    AllLog, 1)),
+                       [{_, 6}] = Res,
+                       1 = length(extract_fitting_died_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(MiddleFittingNormal)",
+               fun() ->
+                       {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
+                           (catch generic_transform(DecrOrCrashFun,
+                                                    MiddleFittingNormal,
+                                                    AllLog, 5)),
+                       [{_, 15}] = Res,
+                       2 = length(extract_fitting_died_errors(Trace)),
+                       1 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(MiddleFittingCrash)",
+               fun() ->
+                       {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
+                           (catch generic_transform(DecrOrCrashFun,
+                                                    MiddleFittingCrash,
+                                                    AllLog, 5)),
+                       [{_, 15}] = Res,
+                       5 = length(extract_fitting_died_errors(Trace)),
+                       0 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"generic_transform(TailFittingCrash)",
+               fun() ->
+                       {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
+                           (catch generic_transform(DecrOrCrashFun,
+                                                    TailFittingCrash,
+                                                    AllLog, 5)),
+                       [{_, 15}] = Res,
+                       5 = length(extract_fitting_died_errors(Trace)),
+                       0 = length(extract_trace_errors(Trace))
+               end}
+      end
+     ]
+    }.
+
+validate_test_() ->
     {foreach,
      prepare_runtime(),
      teardown_runtime(),
      [
       fun(_) ->
-              {"example_transform(XBad1)",
+              {"very bad fitting",
                fun() ->
-                       {eoi, Res, Errs} =
-                           example_transform(XBad1, [{log, sink}, {trace, [error]}]),
-                       [{_, 6}, {_, 15}, {_, 33}] = lists:sort(Res),
-                       [{_, {trace, [error], {error, Ps}}}] = Errs,
-                       error = proplists:get_value(type, Ps),
-                       badarith = proplists:get_value(error, Ps),
-                       [7, 8, bummer] = proplists:get_value(input, Ps)
+                       badarg = (catch
+                                     riak_pipe_fitting:validate_fitting(x))
+               end}
+      end,
+      fun(_) ->
+              {"bad fitting module",
+               fun() ->
+                       badarg = (catch
+                                     riak_pipe_fitting:validate_fitting(
+                                       #fitting_spec{name=empty_pass,
+                                                     module=does_not_exist,
+                                                     partfun=fun(_) -> 0 end}))
+               end}
+      end,
+      fun(_) ->
+              {"bad fitting argument",
+               fun() ->
+                       badarg = (catch
+                                     riak_pipe_fitting:validate_fitting(
+                                       #fitting_spec{name=empty_pass,
+                                                     module=riak_pipe_w_reduce,
+                                                     arg=bogus_arg,
+                                                     partfun=fun(_) -> 0 end}))
+               end}
+      end,
+      fun(_) ->
+              {"good partfun",
+               fun() ->
+                       ok = (catch
+                                 riak_pipe_fitting:validate_fitting(
+                                   #fitting_spec{name=empty_pass,
+                                                 module=riak_pipe_w_pass,
+                                                 partfun=follow}))
+               end}
+      end,
+      fun(_) ->
+              {"bad partfun",
+               fun() ->
+                       badarg = (catch
+                                     riak_pipe_fitting:validate_fitting(
+                                      #fitting_spec{name=empty_pass,
+                                                    module=riak_pipe_w_pass,
+                                                    partfun=fun(_,_) -> 0 end}))
+               end}
+      end,
+      fun(_) ->
+              {"format_name coverage",
+               fun() ->
+                       <<"foo">> = riak_pipe_fitting:format_name(<<"foo">>),
+                       "foo" = riak_pipe_fitting:format_name("foo"),
+                       "[foo]" = lists:flatten(
+                                   riak_pipe_fitting:format_name([foo]))
                end}
       end
-     ]
-    }.
+     ]}.
+
 -endif.  % TEST

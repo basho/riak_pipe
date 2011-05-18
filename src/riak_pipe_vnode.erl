@@ -520,6 +520,7 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                 error_logger:error_msg(
                   "Pipe worker startup failed:"
                   "fitting was gone before startup"),
+                ?T_ERR(#fitting_details{options=[{trace,all}]}, {hrm, gone}),
                 worker_startup_failed
         end
     catch Type:Reason ->
