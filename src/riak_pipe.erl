@@ -480,6 +480,10 @@ extract_trace_errors(Trace) ->
 extract_fitting_died_errors(Trace) ->
     [X || {_, {trace, [error], {vnode, {fitting_died, _}} = X}} <- Trace].
 
+extract_queued(Trace) ->
+    [{Partition, X} ||
+        {_, {trace, _, {vnode, {queued, Partition, X}}}} <- Trace].
+
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
         VNode <- riak_core_vnode_master:all_nodes(riak_pipe_vnode)].
@@ -564,6 +568,13 @@ teardown_runtime() ->
      end.    
 
 basic_test_() ->
+    AllLog = [{log, sink}, {trace, all}],
+    OrderFun = fun(Head, _Sink) ->
+                    ok = riak_pipe_vnode:queue_work(Head, 1),
+                    riak_pipe_fitting:eoi(Head),
+                    ok
+           end,
+    MultBy2 = fun(X) -> 2 * X end,
     {foreach,
      prepare_runtime(),
      teardown_runtime(),
@@ -588,6 +599,19 @@ basic_test_() ->
                        {eoi, Res, []} = ?MODULE:example_reduce(),
                        [{"sum reduce", {a, [55]}},
                         {"sum reduce", {b, [155]}}] = lists:sort(Res)
+               end}
+      end,
+      fun(_) ->
+              {"pipeline order",
+               fun() ->
+                       {eoi, Res, Trace} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             AllLog, 5),
+                       [{_, 32}] = Res,
+                       0 = length(extract_trace_errors(Trace)),
+                       Qed = extract_queued(Trace),
+                       %% NOTE: The msg to the sink doesn't appear in Trace
+                       [1,2,4,8,16] = [X || {_, X} <- Qed]
                end}
       end
      ]
