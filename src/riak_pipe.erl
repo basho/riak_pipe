@@ -890,4 +890,14 @@ validate_test_() ->
       end
      ]}.
 
+should_be_the_very_last_test() ->
+    Leftovers = [{Pid, X} ||
+                    Pid <- processes(),
+                    {eunit, X} <- element(2, process_info(Pid, dictionary))],
+    [] = Leftovers.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% NOTE: Do not put any EUnit tests after should_be_the_very_last_test()
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -endif.  % TEST
