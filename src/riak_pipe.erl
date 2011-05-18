@@ -822,6 +822,36 @@ exception_test_() ->
                        5 = length(extract_fitting_died_errors(Trace)),
                        0 = length(extract_trace_errors(Trace))
                end}
+      end,
+      fun(_) ->
+              {"worker init crash 1",
+               fun() ->
+                       {ok, Head, Sink} =
+                           riak_pipe:exec(
+                             [#fitting_spec{name="init crash",
+                                            module=riak_pipe_w_crash,
+                                            arg=init_exit,
+                                            partfun=follow}], AllLog),
+                       {error, worker_startup_failed} =
+                           riak_pipe_vnode:queue_work(Head, x),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, [], []} = collect_results(Sink, 500)
+               end}
+      end,
+      fun(_) ->
+              {"worker init crash 2 (only init arg differs from #1 above)",
+               fun() ->
+                       {ok, Head, Sink} =
+                           riak_pipe:exec(
+                             [#fitting_spec{name="init crash",
+                                            module=riak_pipe_w_crash,
+                                            arg=init_badreturn,
+                                            partfun=follow}], AllLog),
+                       {error, worker_startup_failed} =
+                           riak_pipe_vnode:queue_work(Head, x),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, [], []} = collect_results(Sink, 500)
+               end}
       end
      ]
     }.
