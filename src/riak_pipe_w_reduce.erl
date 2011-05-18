@@ -182,8 +182,8 @@ reduce(Key, InAcc, #state{p=Partition, fd=FittingDetails}) ->
 validate_arg(Fun) when is_function(Fun) ->
     riak_pipe_v:validate_function("arg", 4, Fun);
 validate_arg(Fun) ->
-    throw(io_lib:format("~p requires a function as argument, not a ~p",
-                          [?MODULE, riak_pipe_v:type_of(Fun)])).
+    {error, io_lib:format("~p requires a function as argument, not a ~p",
+                          [?MODULE, riak_pipe_v:type_of(Fun)])}.
 
 %% @doc The preferred partition function.  Chooses a partition based
 %%      on the hash of the `Key'.
