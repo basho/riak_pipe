@@ -479,6 +479,14 @@ extract_queued(Trace) ->
     [{Partition, X} ||
         {_, {trace, _, {vnode, {queued, Partition, X}}}} <- Trace].
 
+extract_queue_full(Trace) ->
+    [Partition ||
+        {_, {trace, _, {vnode, {queue_full, Partition, _}}}} <- Trace].
+
+extract_unblocking(Trace) ->
+    [Partition ||
+        {_, {trace, _, {vnode, {unblocking, Partition}}}} <- Trace].
+
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
         VNode <- riak_core_vnode_master:all_nodes(riak_pipe_vnode)].
@@ -632,6 +640,10 @@ exception_test_() ->
     DecrOrCrashFun = fun(0) -> exit(blastoff);
                         (N) -> N - 1
                      end,
+    Sleep1Fun = fun(X) ->
+                        timer:sleep(1),
+                        X
+                end,
     XBad1 = fun(Head, _Sink) ->
                     ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
                     ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
@@ -743,6 +755,15 @@ exception_test_() ->
     Send_one_100 =
         fun(Head, _Sink) ->
                 ok = riak_pipe_vnode:queue_work(Head, 100),
+                %% Sleep so that we don't have workers being shutdown before
+                %% the above work item gets to the end of the pipe.
+                timer:sleep(100),
+                riak_pipe_fitting:eoi(Head)
+        end,
+    Send_onehundred_100 =
+        fun(Head, _Sink) ->
+                [ok = riak_pipe_vnode:queue_work(Head, 100) ||
+                    _ <- lists:seq(1,100)],
                 %% Sleep so that we don't have workers being shutdown before
                 %% the above work item gets to the end of the pipe.
                 timer:sleep(100),
@@ -948,6 +969,19 @@ exception_test_() ->
                        {eoi, Res, Trace1} = collect_results(Sink1, 500),
                        100 = length(Res),
                        [] = extract_trace_errors(Trace1)
+               end}
+      end,
+      fun(_) ->
+              {"Per worker queue limit enforcement",
+               fun() ->
+                       {eoi, Res, Trace} =
+                           generic_transform(Sleep1Fun,
+                                             Send_onehundred_100,
+                                             AllLog, 1),
+                       100 = length(Res),
+                       Full = length(extract_queue_full(Trace)),
+                       NoLongerFull = length(extract_unblocking(Trace)),
+                       Full = NoLongerFull
                end}
       end
      ]
