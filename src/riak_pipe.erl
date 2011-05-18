@@ -613,6 +613,20 @@ basic_test_() ->
                        %% NOTE: The msg to the sink doesn't appear in Trace
                        [1,2,4,8,16] = [X || {_, X} <- Qed]
                end}
+      end,
+      fun(_) ->
+              {"trace filtering",
+               fun() ->
+                       {eoi, _Res, Trace1} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             [{log,sink}, {trace, [eoi]}], 5),
+                       {eoi, _Res, Trace2} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             [{log,sink}, {trace, all}], 5),
+                       %% Looking too deeply into the format of the trace
+                       %% messages, since they haven't gelled yet, is madness.
+                       length(Trace1) < length(Trace2)
+               end}
       end
      ]
     }.
