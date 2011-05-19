@@ -39,6 +39,7 @@
          handle_info/2]).
 -export([queue_work/2,
          queue_work/3,
+         queue_work/4,
          eoi/2,
          next_input/2,
          reply_archive/3,
@@ -51,9 +52,12 @@
 -include("riak_pipe_debug.hrl").
 
 -export_type([chashfun/0,
-              partition/0]). %% from riak_core_vnode.hrl
+              partition/0, %% from riak_core_vnode.hrl
+              qtimeout/0]).
 -type chashfun() :: fun((term()) -> chash()) | follow | sink.
 -type chash() :: chash:index().
+-type qtimeout() :: noblock | infinity.
+-type qerror() :: worker_limit_reached | worker_startup_failed | timeout.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
@@ -88,7 +92,8 @@
 -opaque state() :: #state{}.
 
 -record(cmd_enqueue, {fitting :: #fitting{},
-                      input :: term()}).
+                      input :: term(),
+                      timeout :: qtimeout()}).
 -record(cmd_eoi, {fitting :: #fitting{}}).
 -record(cmd_next_input, {fitting :: #fitting{}}).
 -record(cmd_archive, {fitting :: #fitting{},
@@ -173,33 +178,52 @@ hash_for_partition(I) ->
     %% in the hash space they own
     <<(I-1):160/integer>>.
 
+%% @equiv queue_work(Fitting, Input, infinity)
+queue_work(Fitting, Input) ->
+    queue_work(Fitting, Input, infinity).
+
 %% @doc Queue the given `Input' for processing by the `Fitting'.  This
 %%      function handles getting the input to the correct vnode by
 %%      evaluating the fitting's consistent-hashing function
 %%      (`chashfun') on the input.
--spec queue_work(riak_pipe:fitting(), term()) ->
-         ok | {error, worker_limit_reached | worker_startup_failed}.
-queue_work(#fitting{chashfun=follow}=Fitting, Input) ->
+-spec queue_work(riak_pipe:fitting(), term(), qtimeout()) ->
+         ok | {error, qerror()}.
+queue_work(#fitting{chashfun=follow}=Fitting, Input, Timeout) ->
     %% this should only happen if someone sets up a pipe with
     %% the first fitting as chashfun=follow
-    queue_work(Fitting, Input, any_local_vnode());
-queue_work(#fitting{chashfun=HashFun}=Fitting, Input) ->
-    queue_work(Fitting, Input, HashFun(Input)).
+    queue_work(Fitting, Input, Timeout, any_local_vnode());
+queue_work(#fitting{chashfun=HashFun}=Fitting, Input, Timeout) ->
+    queue_work(Fitting, Input, Timeout, HashFun(Input)).
 
 %% @doc Queue the given `Input' for processing the the `Fitting' on
 %%      the vnode specified by `Hash'.  This version of the function
 %%      is used to support the `follow' chashfun, by allowing a worker
 %%      to send the input directly to the vnode it works for.
--spec queue_work(riak_pipe:fitting(), term(), chash()) ->
-         ok | {error, worker_limit_reached | worker_startup_failed}.
-queue_work(#fitting{ref=Ref}=Fitting, Input, Hash) ->
+%%
+%%      `Timeout' may be any of the following:
+%%<dl><dt>
+%%      `infinity'
+%%</dt><dd>
+%%      Never timeout.  Wait as long as necessary to get the input in
+%%      the queue.
+%%</dd><dt>
+%%      `noblock'
+%%</dt><dd>
+%%      Timeout if the vnode cannot immediately queue the input.
+%%      `noblock' will wait as long as necessary for a response from
+%%      the vnode, but will direct the vnode not to block the request
+%%      if the queue is full.
+%%</dd></dl>
+-spec queue_work(riak_pipe:fitting(), term(), qtimeout(), chash()) ->
+         ok | {error, qerror()}.
+queue_work(#fitting{ref=Ref}=Fitting, Input, Timeout, Hash) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_node_watcher:nodes(riak_pipe),
     [{{Partition, Node},_}|_] =
         riak_core_apl:get_apl_ann(Hash, 1, Ring, Nodes),
     riak_core_vnode_master:command(
       {Partition, Node},
-      #cmd_enqueue{fitting=Fitting, input=Input},
+      #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout},
       {raw, Ref, self()},
       riak_pipe_vnode_master),
     %% block until input confirmed queued, for backpressure
@@ -463,14 +487,14 @@ handle_info(_,State) ->
 %%      to the work queue).
 -spec enqueue_internal(#cmd_enqueue{}, sender(), state()) ->
          {reply,
-          ok | {error, worker_limit_reached | worker_startup_failed},
+          ok | {error, qerror()},
           state()}
        | {noreply, state()}.
-enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input},
+enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO},
                  Sender, #state{partition=Partition}=State) ->
     case worker_for(Fitting, State) of
         {ok, Worker} ->
-            case add_input(Worker, Input, Sender) of
+            case add_input(Worker, Input, Sender, TO) of
                 {ok, NewWorker} ->
                     ?T(NewWorker#worker.details, [queue],
                        {vnode, {queued, Partition, Input}}),
@@ -480,7 +504,9 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input},
                        {vnode, {queue_full, Partition, Input}}),
                     %% if the queue is full, hold up the producer
                     %% until we're ready for more
-                    {noreply, replace_worker(NewWorker, State)}
+                    {noreply, replace_worker(NewWorker, State)};
+                timeout ->
+                    {reply, {error, timeout}, replace_worker(Worker, State)}
             end;
         worker_limit_reached ->
             %% TODO: log/trace this event
@@ -548,19 +574,22 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
 %% @doc Add an input to the worker's queue.  If the worker is
 %%      `waiting', send the input to it, skipping the queue.  If the
 %%      queue is full, add the request to the blocking queue instead.
--spec add_input(#worker{}, term(), sender()) ->
-         {ok | queue_full, #worker{}}.
-add_input(#worker{state=waiting}=Worker, Input, _Sender) ->
+-spec add_input(#worker{}, term(), sender(), qtimeout()) ->
+         {ok | queue_full, #worker{}} | timeout.
+add_input(#worker{state=waiting}=Worker, Input, _Sender, _TO) ->
     %% worker has been waiting for something to enter its queue
     send_input(Worker, Input),
     {ok, Worker#worker{state={working, Input}}};
-add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker, Input, Sender) ->
+add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker,
+          Input, Sender, TO) ->
     case queue:len(Q) < QL of
         true ->
             {ok, Worker#worker{q=queue:in(Input, Q)}};
-        false ->
+        false when TO =/= noblock ->
             NewBlocking = queue:in({Input, Sender}, Blocking),
-            {queue_full, Worker#worker{blocking=NewBlocking}}
+            {queue_full, Worker#worker{blocking=NewBlocking}};
+        false ->
+            timeout
     end.
 
 %% @doc Merge the worker on this vnode with the worker from another

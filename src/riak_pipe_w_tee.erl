@@ -57,7 +57,8 @@ process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
               #fitting{}=Fitting ->
                   Fitting
           end,
-    riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails, Tee),
+    riak_pipe_vnode_worker:send_output(
+      Input, Partition, FittingDetails, Tee, infinity),
     riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
     {ok, State}.
 

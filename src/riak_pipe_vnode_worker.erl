@@ -104,10 +104,12 @@
 -export([start_link/3]).
 -export([send_input/2,
          recurse_input/3,
+         recurse_input/4,
          send_handoff/2,
          send_archive/1,
          send_output/3,
-         send_output/4]).
+         send_output/4,
+         send_output/5]).
 -export([behaviour_info/1]).
 
 %% gen_fsm callbacks
@@ -173,16 +175,26 @@ send_handoff(WorkerPid, Handoff) ->
 send_archive(WorkerPid) ->
     gen_fsm:send_event(WorkerPid, archive).
 
+%% @equiv send_output(Output, FromPartition, Details, infinity)
+send_output(Output, FromPartition, Details) ->
+    send_output(Output, FromPartition, Details, infinity).
+
 %% @doc Send output from the given fitting to the next output down the
 %%      line. `FromPartition' is used in the case that the next
 %%      fitting's partition function is `follow'.
 -spec send_output(term(),
                   riak_pipe_vnode:partition(),
-                  riak_pipe_fitting:details()) ->
+                  riak_pipe_fitting:details(),
+                  riak_pipe_vnode:qtimeout()) ->
          ok.
 send_output(Output, FromPartition,
-            #fitting_details{output=Fitting}=Details) ->
-    send_output(Output, FromPartition, Details, Fitting).
+            #fitting_details{output=Fitting}=Details,
+            Timeout) ->
+    send_output(Output, FromPartition, Details, Fitting, Timeout).
+
+%% @equiv recurse_input(Input, FromPartition, Details, noblock)
+recurse_input(Input, FromPartition, Details) ->
+    recurse_input(Input, FromPartition, Details, noblock).
 
 %% @doc Send a new input from this fitting, to itself.  This can be
 %%      used to write fittings that perform recursive calculation,
@@ -192,6 +204,14 @@ send_output(Output, FromPartition,
 %%      `recurse_input/3' to send children to other vnodes, instead of
 %%      processing them in the same worker, may be a useful strategy.
 %%
+%%      WARNING: Using recurse_input with a `Timeout' of `infinity' is
+%%      discouraged, unless you can guarantee that the queues for a
+%%      fitting will never be full.  Otherwise, it's possible to
+%%      deadlock a fitting by blocking on enqueueing an input for a
+%%      worker that is blocking on enqueueing an input for the sender
+%%      (circular blocking).  Use `noblock' and handle timeout
+%%      failures to prevent deadlock.
+%%
 %%      Internal details: This works because of the nature of the
 %%      blocking enqueue operation.  It is guaranteed that as long as
 %%      this worker is alive, the fitting for which it works will not
@@ -199,37 +219,39 @@ send_output(Output, FromPartition,
 %%      enqueues this input will still be able to ask the fitting for
 %%      details, and the fitting will know that it has to wait on that
 %%      vnode.
-%%
-%%      TODO: This will block forever if the worker sends to its own
-%%      vnode, and the queue is full.
 -spec recurse_input(term(),
                     riak_pipe_vnode:partition(),
-                    riak_pipe_fitting:details()) ->
+                    riak_pipe_fitting:details(),
+                    riak_pipe_vnode:qtimeout()) ->
          ok.
 recurse_input(Input, FromPartition,
-              #fitting_details{fitting=Fitting}=Details) ->
-    send_output(Input, FromPartition, Details, Fitting).
+              #fitting_details{fitting=Fitting}=Details,
+              Timeout) ->
+    send_output(Input, FromPartition, Details, Fitting, Timeout).
 
 %% @doc Send output from the given fitting to a specific fitting.
 %%      This is most often used to send output to the sink, but also
 %%      happens to be the internal implementation of {@link
 %%      send_output/3}.
 -spec send_output(term(), riak_pipe_vnode:partition(),
-                  riak_pipe_fitting:details(), riak_pipe:fitting()) ->
+                  riak_pipe_fitting:details(), riak_pipe:fitting(),
+                  riak_pipe_vnode:qtimeout()) ->
          ok.
 send_output(Output, FromPartition,
             #fitting_details{name=Name}=_Details,
-            FittingOverride) ->
+            FittingOverride,
+            Timeout) ->
     case FittingOverride#fitting.chashfun of
         sink ->
             riak_pipe:result(Name, FittingOverride, Output),
             ok;
         follow ->
             ok = riak_pipe_vnode:queue_work(
-                   FittingOverride, Output,
+                   FittingOverride, Output, Timeout,
                    riak_pipe_vnode:hash_for_partition(FromPartition));
         _ ->
-            ok = riak_pipe_vnode:queue_work(FittingOverride, Output)
+            ok = riak_pipe_vnode:queue_work(
+                   FittingOverride, Output, Timeout)
     end.
 
 %%%===================================================================
