@@ -406,8 +406,10 @@ terminate(_Reason, _State) ->
 handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
     NewState = case worker_by_pid(Pid, State) of
                    {ok, Worker} ->
-                       case {Worker#worker.inputs_done, Reason} of
-                           {true, normal} ->
+                       case {Worker#worker.inputs_done,
+                             queue:is_empty(Worker#worker.q),
+                             Reason} of
+                           {true, true, normal} ->
                                ?T(Worker#worker.details, [done],
                                   {vnode, {done, Partition}}),
                                send_done(Worker#worker.fitting),

@@ -103,6 +103,7 @@
 %% API
 -export([start_link/3]).
 -export([send_input/2,
+         recurse_input/3,
          send_handoff/2,
          send_archive/1,
          send_output/3,
@@ -182,6 +183,32 @@ send_archive(WorkerPid) ->
 send_output(Output, FromPartition,
             #fitting_details{output=Fitting}=Details) ->
     send_output(Output, FromPartition, Details, Fitting).
+
+%% @doc Send a new input from this fitting, to itself.  This can be
+%%      used to write fittings that perform recursive calculation,
+%%      where steps in the recursion might be done in parallel.
+%%
+%%      For example, when walking intermediate tree nodes, using
+%%      `recurse_input/3' to send children to other vnodes, instead of
+%%      processing them in the same worker, may be a useful strategy.
+%%
+%%      Internal details: This works because of the nature of the
+%%      blocking enqueue operation.  It is guaranteed that as long as
+%%      this worker is alive, the fitting for which it works will not
+%%      receive all of its `done' messages.  So, the vnode that
+%%      enqueues this input will still be able to ask the fitting for
+%%      details, and the fitting will know that it has to wait on that
+%%      vnode.
+%%
+%%      TODO: This will block forever if the worker sends to its own
+%%      vnode, and the queue is full.
+-spec recurse_input(term(),
+                    riak_pipe_vnode:partition(),
+                    riak_pipe_fitting:details()) ->
+         ok.
+recurse_input(Input, FromPartition,
+              #fitting_details{fitting=Fitting}=Details) ->
+    send_output(Input, FromPartition, Details, Fitting).
 
 %% @doc Send output from the given fitting to a specific fitting.
 %%      This is most often used to send output to the sink, but also
