@@ -299,6 +299,10 @@ send_output(Output, FromPartition,
        | {stop, {init_failed, term(), term()}}.
 init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
+        put(eunit, [{module, ?MODULE},
+                    {partition, Partition},
+                    {VnodePid, VnodePid},
+                    {details, FittingDetails}]),
         {ok, ModState} = Module:init(Partition, FittingDetails),
         {ok, initial_input_request,
          #state{partition=Partition,
@@ -412,19 +416,38 @@ process_input(Input, UsedPreflist,
               #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
     NVal = (FD#fitting_details.fitting)#fitting.nval,
-    {Result, NewModState} = Module:process(Input,
-                                           length(UsedPreflist) == NVal,
-                                           ModState),
-    case Result of
-        ok ->
-            ok;
-        forward_preflist ->
-            forward_preflist(Input, UsedPreflist, State);
-        {error, Error} ->
-            %% TODO: replace this with T_ERR when merging master
-            ?T(FD, [error], {error, {Error, Input}})
-    end,
-    State#state{modstate=NewModState}.
+    try
+        {Result, NewModState} = Module:process(Input,
+                                               length(UsedPreflist) == NVal,
+                                               ModState),
+        case Result of
+            ok ->
+                ok;
+            forward_preflist ->
+                forward_preflist(Input, UsedPreflist, State);
+            {error, RError} ->
+                processing_error(
+                  result, RError, FD, ModState, Module, State, Input)
+        end,
+        State#state{modstate=NewModState}
+    catch Type:Error ->
+            processing_error(Type, Error, FD, ModState, Module, State, Input),
+            State
+    end.            
+
+%% @private
+processing_error(Type, Error, FD, ModState, Module, State, Input) ->
+    Fields = record_info(fields, fitting_details),
+    FieldPos = lists:zip(Fields, lists:seq(2, length(Fields)+1)),
+    DsList = [{Field, element(Pos, FD)} || {Field, Pos} <- FieldPos],
+    ?T_ERR(FD, [{module, Module},
+                {partition, State#state.partition},
+                {details, DsList},
+                {type, Type},
+                {error, Error},
+                {input, Input},
+                {modstate, ModState},
+                {stack, erlang:get_stacktrace()}]).
 
 %% @doc Process a done (end-of-inputs) message - call the implementing
 %%      module's `done/1' function.
@@ -477,13 +500,14 @@ reply_archive(Archive, #state{vnode=Vnode, details=Details}) ->
 %%      input.
 -spec forward_preflist(term(), riak_core_apl:preflist(), state()) -> ok.
 forward_preflist(Input, UsedPreflist,
-                 #state{partition=Partition, details=FittingDetails}) ->
+                 #state{partition=Partition,
+                        details=FittingDetails}=State) ->
     case recurse_input(Input, Partition, FittingDetails,
                        noblock, UsedPreflist) of
         ok -> ok;
         {error, Error} ->
-            %% TODO: replace with T_ERRO when merging master
-            ?T(FittingDetails,
-               [forward_preflist],
-               {error, Error, Input})
+            processing_error(forward_preflist, Error, FittingDetails,
+                             State#state.modstate,
+                             FittingDetails#fitting_details.module,
+                             State, Input)
     end.

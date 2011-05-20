@@ -33,6 +33,9 @@
          workers/1]).
 -export([validate_fitting/1,
          format_name/1]).
+-ifdef(TEST).
+-export([crash/2]).
+-endif.
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -122,6 +125,13 @@ workers(Fitting) ->
             gone
     end.
 
+-ifdef(TEST).
+crash(#fitting{pid=Pid}, Fun) ->
+    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun});
+crash(Pid, Fun) ->
+    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun}).
+-endif.
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -151,6 +161,10 @@ init([Builder,
 
     ?T(Details, [], {fitting, init_finished}),
 
+    put(eunit, [{module, ?MODULE},
+                {fitting, Fitting},
+                {details, Details},
+                {builder, Builder}]),
     {ok, wait_upstream_eoi,
      #state{builder=Builder, details=Details, workers=[],
             ref=Output#fitting.ref}}.
@@ -286,6 +300,9 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     Partitions = [ P || #worker{partition=P} <- Workers ],
     {reply, Partitions, StateName, State};
+handle_sync_event({test_crash, Fun},_,_,_) ->
+    %% Only test-enabled client sends this.
+    Fun();
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.

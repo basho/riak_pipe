@@ -95,6 +95,11 @@ get_first_fitting(BuilderPid, Ref) ->
 init([Spec, Options]) ->
     {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
     Fittings = start_fittings(Spec, Options),
+    put(eunit, [{module, ?MODULE},
+                {ref, Ref},
+                {spec, Spec},
+                {options, Options},
+                {fittings, Fittings}]),
     {ok, wait_pipeline_shutdown,
      #state{options=Options,
             ref=Ref,

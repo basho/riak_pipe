@@ -567,6 +567,8 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
             end;
         worker_limit_reached ->
             %% TODO: log/trace this event
+            %% Except we don't have details here to associate with a trace
+            %% function: ?T_ERR(WhereToGetDetails, whatever_limit_hit_here),
             {reply, {error, worker_limit_reached}, State};
         worker_startup_failed ->
             %% TODO: log/trace this event
