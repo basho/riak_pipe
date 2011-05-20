@@ -415,7 +415,10 @@ request_input(#state{vnode=Vnode, details=Details}) ->
 process_input(Input, UsedPreflist,
               #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
-    NVal = (FD#fitting_details.fitting)#fitting.nval,
+    NVal = case (FD#fitting_details.fitting)#fitting.nval of
+               NValInt when is_integer(NValInt) -> NValInt;
+               NValFun                          -> NValFun(Input)
+           end,
     try
         {Result, NewModState} = Module:process(Input,
                                                length(UsedPreflist) == NVal,
