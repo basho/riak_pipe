@@ -53,6 +53,7 @@
 -include("riak_pipe_debug.hrl").
 
 -export_type([chashfun/0,
+              chash/0,
               partition/0, %% from riak_core_vnode.hrl
               nval/0,
               qtimeout/0]).
