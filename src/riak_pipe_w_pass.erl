@@ -26,7 +26,7 @@
 -behaviour(riak_pipe_vnode_worker).
 
 -export([init/2,
-         process/2,
+         process/3,
          done/1]).
 
 -include("riak_pipe.hrl").
@@ -37,7 +37,7 @@
 -opaque state() :: #state{}.
 
 %% @doc Initialization just stows the partition and fitting details in
-%%      the module's state, for sending outputs in {@link process/2}.
+%%      the module's state, for sending outputs in {@link process/3}.
 -spec init(riak_pipe_vnode:partition(),
            riak_pipe_fitting:details()) ->
         {ok, state()}.
@@ -49,8 +49,8 @@ init(Partition, FittingDetails) ->
 %%      Input}' before sending the output, and `{processed, Input}' after
 %%      the blocking output send has returned.  This can be useful for
 %%      dropping in another pipeline to watching data move through it.
--spec process(term(), state()) -> {ok, state()}.
-process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
+-spec process(term(), boolean(), state()) -> {ok, state()}.
+process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     ?T(FittingDetails, [], {processing, Input}),
     riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
     ?T(FittingDetails, [], {processed, Input}),

@@ -40,6 +40,7 @@
 -export([queue_work/2,
          queue_work/3,
          queue_work/4,
+         queue_work/5,
          eoi/2,
          next_input/2,
          reply_archive/3,
@@ -53,11 +54,16 @@
 
 -export_type([chashfun/0,
               partition/0, %% from riak_core_vnode.hrl
+              nval/0,
               qtimeout/0]).
 -type chashfun() :: fun((term()) -> chash()) | follow | sink.
 -type chash() :: chash:index().
+-type nval() :: pos_integer() | fun((term()) -> pos_integer()).
 -type qtimeout() :: noblock | infinity.
--type qerror() :: worker_limit_reached | worker_startup_failed | timeout.
+-type qerror() :: worker_limit_reached
+                | worker_startup_failed
+                | timeout
+                | preflist_exhausted.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
@@ -93,7 +99,8 @@
 
 -record(cmd_enqueue, {fitting :: #fitting{},
                       input :: term(),
-                      timeout :: qtimeout()}).
+                      timeout :: qtimeout(),
+                      usedpreflist :: riak_core_apl:preflist()}).
 -record(cmd_eoi, {fitting :: #fitting{}}).
 -record(cmd_next_input, {fitting :: #fitting{}}).
 -record(cmd_archive, {fitting :: #fitting{},
@@ -182,18 +189,25 @@ hash_for_partition(I) ->
 queue_work(Fitting, Input) ->
     queue_work(Fitting, Input, infinity).
 
+%% @equiv queue_work(Fitting, Input, Timeout, [])
+queue_work(Fitting, Input, Timeout) ->
+    queue_work(Fitting, Input, Timeout, []).
+
 %% @doc Queue the given `Input' for processing by the `Fitting'.  This
 %%      function handles getting the input to the correct vnode by
 %%      evaluating the fitting's consistent-hashing function
 %%      (`chashfun') on the input.
--spec queue_work(riak_pipe:fitting(), term(), qtimeout()) ->
+-spec queue_work(riak_pipe:fitting(), term(), qtimeout(),
+                 riak_core_apl:preflist()) ->
          ok | {error, qerror()}.
-queue_work(#fitting{chashfun=follow}=Fitting, Input, Timeout) ->
+queue_work(#fitting{chashfun=follow}=Fitting,
+           Input, Timeout, UsedPreflist) ->
     %% this should only happen if someone sets up a pipe with
     %% the first fitting as chashfun=follow
-    queue_work(Fitting, Input, Timeout, any_local_vnode());
-queue_work(#fitting{chashfun=HashFun}=Fitting, Input, Timeout) ->
-    queue_work(Fitting, Input, Timeout, HashFun(Input)).
+    queue_work(Fitting, Input, Timeout, UsedPreflist, any_local_vnode());
+queue_work(#fitting{chashfun=HashFun}=Fitting,
+           Input, Timeout, UsedPreflist) ->
+    queue_work(Fitting, Input, Timeout, UsedPreflist, HashFun(Input)).
 
 %% @doc Queue the given `Input' for processing the the `Fitting' on
 %%      the vnode specified by `Hash'.  This version of the function
@@ -214,16 +228,57 @@ queue_work(#fitting{chashfun=HashFun}=Fitting, Input, Timeout) ->
 %%      the vnode, but will direct the vnode not to block the request
 %%      if the queue is full.
 %%</dd></dl>
--spec queue_work(riak_pipe:fitting(), term(), qtimeout(), chash()) ->
+-spec queue_work(riak_pipe:fitting(), term(),
+                 qtimeout(), riak_core_apl:preflist(), chash()) ->
          ok | {error, qerror()}.
-queue_work(#fitting{ref=Ref}=Fitting, Input, Timeout, Hash) ->
+queue_work(#fitting{nval=NVal}=Fitting,
+           Input, Timeout, UsedPreflist, Hash) ->
+    case remaining_preflist(Input, Hash, NVal, UsedPreflist) of
+        [NextPref|_] ->
+            case queue_work_send(Fitting, Input, Timeout,
+                                 [NextPref|UsedPreflist]) of
+                ok -> ok;
+                {error, _} ->
+                    queue_work(Fitting, Input, Timeout, UsedPreflist, Hash)
+            end;
+        [] ->
+            {error, preflist_exhausted}
+    end.
+
+%% @doc Compute the elements of the preflist that have not been
+%%      attempted for this input yet.
+-spec remaining_preflist(term(), chash(), nval(),
+                         riak_core_apl:preflist()) ->
+         riak_core_apl:preflist().
+remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_node_watcher:nodes(riak_pipe),
-    [{{Partition, Node},_}|_] =
-        riak_core_apl:get_apl_ann(Hash, 1, Ring, Nodes),
+    IntNVal = if is_integer(NVal)  -> NVal;
+                 is_function(NVal) -> NVal(Input)
+              end,
+    %% it's possible that node availability changes could cause
+    %% different vnodes to be available at different evaluations, so
+    %% we have to check the length of UsedPreflist explicitly, instead
+    %% of just expecting to filter all of the elements it contains
+    if length(UsedPreflist) < IntNVal ->
+            Preflist = riak_core_apl:get_apl(Hash, IntNVal, Ring, Nodes),
+            Preflist--UsedPreflist;
+       true ->
+            []
+    end.
+
+%% @doc Do the actual sending of the work to the vnode, as well as
+%%      receiving the response.
+-spec queue_work_send(riak_pipe:fitting(), term(), qtimeout(),
+                      riak_core_apl:preflist()) ->
+         ok | {error, term()}.
+queue_work_send(#fitting{ref=Ref}=Fitting,
+                Input, Timeout,
+                [NextPref|_]=UsedPreflist) ->
     riak_core_vnode_master:command(
-      {Partition, Node},
-      #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout},
+      NextPref,
+      #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
+                   usedpreflist=UsedPreflist},
       {raw, Ref, self()},
       riak_pipe_vnode_master),
     %% block until input confirmed queued, for backpressure
@@ -490,11 +545,12 @@ handle_info(_,State) ->
           ok | {error, qerror()},
           state()}
        | {noreply, state()}.
-enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO},
+enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
+                              usedpreflist=UsedPreflist},
                  Sender, #state{partition=Partition}=State) ->
     case worker_for(Fitting, State) of
         {ok, Worker} ->
-            case add_input(Worker, Input, Sender, TO) of
+            case add_input(Worker, Input, Sender, TO, UsedPreflist) of
                 {ok, NewWorker} ->
                     ?T(NewWorker#worker.details, [queue],
                        {vnode, {queued, Partition, Input}}),
@@ -574,19 +630,21 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
 %% @doc Add an input to the worker's queue.  If the worker is
 %%      `waiting', send the input to it, skipping the queue.  If the
 %%      queue is full, add the request to the blocking queue instead.
--spec add_input(#worker{}, term(), sender(), qtimeout()) ->
+-spec add_input(#worker{}, term(), sender(), qtimeout(),
+                riak_core_apl:preflist()) ->
          {ok | queue_full, #worker{}} | timeout.
-add_input(#worker{state=waiting}=Worker, Input, _Sender, _TO) ->
+add_input(#worker{state=waiting}=Worker,
+          Input, _Sender, _TO, UsedPreflist) ->
     %% worker has been waiting for something to enter its queue
-    send_input(Worker, Input),
+    send_input(Worker, {Input, UsedPreflist}),
     {ok, Worker#worker{state={working, Input}}};
 add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker,
-          Input, Sender, TO) ->
+          Input, Sender, TO, UsedPreflist) ->
     case queue:len(Q) < QL of
         true ->
-            {ok, Worker#worker{q=queue:in(Input, Q)}};
+            {ok, Worker#worker{q=queue:in({Input, UsedPreflist}, Q)}};
         false when TO =/= noblock ->
-            NewBlocking = queue:in({Input, Sender}, Blocking),
+            NewBlocking = queue:in({Input, Sender, UsedPreflist}, Blocking),
             {queue_full, Worker#worker{blocking=NewBlocking}};
         false ->
             timeout
@@ -680,20 +738,22 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
 -spec next_input_nohandoff(#worker{}, state()) -> {noreply, state()}.
 next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
     case queue:out(Worker#worker.q) of
-        {{value, Input}, NewQ} ->
+        {{value, {Input, UsedPreflist}}, NewQ} ->
             ?T(Worker#worker.details, [queue],
                {vnode, {dequeue, Partition}}),
-            send_input(Worker, Input),
+            send_input(Worker, {Input, UsedPreflist}),
             WorkingWorker = Worker#worker{state={working, Input},
                                           q=NewQ},
             BlockingWorker = 
                 case {queue:len(NewQ) < Worker#worker.q_limit,
                       queue:out(Worker#worker.blocking)} of
-                    {true, {{value, {BlockInput, Blocker}}, NewBlocking}} ->
+                    {true, {{value, {BlockInput, Blocker, BlockUsedPreflist}},
+                            NewBlocking}} ->
                         ?T(Worker#worker.details, [queue,queue_full],
                            {vnode, {unblocking, Partition}}),
                         %% move blocked input to queue
-                        NewNewQ = queue:in(BlockInput, NewQ),
+                        NewNewQ = queue:in({BlockInput, BlockUsedPreflist},
+                                           NewQ),
                         %% free up blocked sender
                         reply_to_blocker(Blocker, ok),
                         WorkingWorker#worker{q=NewNewQ,
@@ -720,7 +780,9 @@ next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
     end.
 
 %% @doc Send an input to a worker.
--spec send_input(#worker{}, term()) -> ok.
+-spec send_input(#worker{},
+                 done | {term(), riak_core_apl:preflist()}) ->
+         ok.
 send_input(Worker, Input) ->
     riak_pipe_vnode_worker:send_input(Worker#worker.pid, Input).
 
@@ -777,7 +839,8 @@ remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
 %% @doc Restart the worker after failure.  The input that the worker
 %%      was processing is skipped.  If the worker fails to restart,
 %%      the inputs in its work queue are sent to the fitting process,
-%%      and the requests in its block queue are sent `fail' responses.
+%%      and the requests in its block queue are sent `{error, fail}'
+%%      responses.
 -spec restart_worker(#worker{}, state()) -> state().
 restart_worker(Worker, State) ->
     CleanState = remove_worker(Worker, State),
@@ -790,8 +853,8 @@ restart_worker(Worker, State) ->
             replace_worker(CopiedWorker, CleanState);
         _Error ->
             %% fail blockers, so they resubmit elsewhere
-            [ reply_to_blocker(Blocker, fail)
-              || {_, Blocker} <- queue:to_list(Worker#worker.blocking) ],
+            [ reply_to_blocker(Blocker, {error, fail})
+              || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
             %% ask fitting to find a better place for the other inputs
             riak_pipe_fitting:send_fail(Worker#worker.fitting,
                                         queue:to_list(Worker#worker.q)),

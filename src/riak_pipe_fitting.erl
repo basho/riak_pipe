@@ -343,8 +343,10 @@ code_change(_OldVsn, StateName, State, _Extra) ->
                      Spec::riak_pipe:fitting_spec(),
                      Output::riak_pipe:fitting()) ->
          riak_pipe:fitting().
-fitting_record(Pid, #fitting_spec{chashfun=HashFun}, #fitting{ref=Ref}) ->
-    #fitting{pid=Pid, ref=Ref, chashfun=HashFun}.
+fitting_record(Pid,
+               #fitting_spec{chashfun=HashFun, nval=NVal},
+               #fitting{ref=Ref}) ->
+    #fitting{pid=Pid, ref=Ref, chashfun=HashFun, nval=NVal}.
 
 %% @doc Send the end-of-inputs signal to the next fitting.
 -spec forward_eoi(state()) -> ok.
@@ -385,7 +387,8 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 %%      module (see {@link riak_pipe_v:validate_module/2}), that the
 %%      arg is valid for the module (see {@link validate_argument/2}),
 %%      and that the partition function is of the proper form (see
-%%      {@link validate_chashfun/1}).
+%%      {@link validate_chashfun/1}).  It also checks that nval is
+%%      undefined or a postive integer.
 %%
 %%      If all components are valid, the atom `ok' is returned.  If
 %%      any piece is invalid, `badarg' is thrown.
@@ -393,7 +396,8 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,
-                               chashfun=HashFun}) ->
+                               chashfun=HashFun,
+                               nval=NVal}) ->
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
@@ -416,6 +420,14 @@ validate_fitting(#fitting_spec{name=Name,
             error_logger:error_msg(
               "Invalid chashfun in fitting spec \"~s\":~n~s",
               [format_name(Name), PFError]),
+            throw(badarg)
+    end,
+    case validate_nval(NVal) of
+        ok -> ok;
+        {error, NVError} ->
+            error_logger:error_msg(
+              "Invalid nval in fitting spec \"~s\":~n~s",
+              [format_name(Name), NVError]),
             throw(badarg)
     end;
 validate_fitting(Other) ->
@@ -451,6 +463,24 @@ validate_chashfun(follow) ->
     ok;
 validate_chashfun(HashFun) ->
     riak_pipe_v:validate_function("chashfun", 1, HashFun).
+
+%% @doc Validate the nval parameter.  This must either be a positive
+%%      integer, or a function of arity 1 (that produces a positive
+%%      integer).
+-spec validate_nval(term()) -> ok | {error, string()}.
+validate_nval(NVal) when is_integer(NVal) ->
+    if NVal > 0 -> ok;
+       true ->
+            {error, io_lib:format(
+                      "expected a positive integer, found ~p", [NVal])}
+    end;
+validate_nval(NVal) when is_function(NVal) ->
+    riak_pipe_v:validate_function("nval", 1, NVal);
+validate_nval(NVal) ->
+    {error, io_lib:format(
+              "expected a positive integer,"
+              " or a function of arity 1; not a ~p",
+              [riak_pipe_v:type_of(NVal)])}.
 
 %% @doc Coerce a fitting name into a printable string.
 -spec format_name(term()) -> iolist().

@@ -68,3 +68,8 @@ riak_core_pb.erl:102: The pattern 'true' can never match the type 'false'
 riak_core_pb.erl:108: The pattern 'true' can never match the type 'false'
 riak_core_pb.erl:118: The pattern 'true' can never match the type 'false'
 riak_core_pb.erl:132: The pattern <Binary, 'string'> can never match the type <'-infinity' | 'false' | 'infinity' | 'nan' | 'true' | binary() | [byte()] | number(),'bytes'>
+###
+### Warnings from validation code, where user code might violate -spec
+###
+riak_pipe_fitting.erl:479: The variable NVal can never match since previous clauses completely covered the type fun((_) -> pos_integer()) | pos_integer()
+

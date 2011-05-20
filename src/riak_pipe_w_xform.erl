@@ -45,7 +45,7 @@
 -behaviour(riak_pipe_vnode_worker).
 
 -export([init/2,
-         process/2,
+         process/3,
          done/1,
          validate_arg/1]).
 
@@ -62,8 +62,8 @@ init(Partition, FittingDetails) ->
     {ok, #state{p=Partition, fd=FittingDetails}}.
 
 %% @doc Process evaluates the fitting's argument function.
--spec process(term(), state()) -> {ok, state()}.
-process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
+-spec process(term(), boolean(), state()) -> {ok, state()}.
+process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     Fun = FittingDetails#fitting_details.arg,
     try
         ok = Fun(Input, Partition, FittingDetails)

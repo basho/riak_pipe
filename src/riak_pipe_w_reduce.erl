@@ -80,7 +80,7 @@
 -behaviour(riak_pipe_vnode_worker).
 
 -export([init/2,
-         process/2,
+         process/3,
          done/1,
          archive/1,
          handoff/2,
@@ -104,8 +104,8 @@ init(Partition, FittingDetails) ->
 
 %% @doc Process looks up the previous result for the `Key', and then
 %%      evaluates the funtion on that with the new `Input'.
--spec process({term(), term()}, state()) -> {ok, state()}.
-process({Key, Input}, #state{accs=Accs}=State) ->
+-spec process({term(), term()}, boolean(), state()) -> {ok, state()}.
+process({Key, Input}, _Last, #state{accs=Accs}=State) ->
     case dict:find(Key, Accs) of
         {ok, OldAcc} -> ok;
         error        -> OldAcc=[]

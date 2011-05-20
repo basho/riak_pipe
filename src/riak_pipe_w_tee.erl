@@ -28,7 +28,7 @@
 -behaviour(riak_pipe_vnode_worker).
 
 -export([init/2,
-         process/2,
+         process/3,
          done/1,
          validate_arg/1]).
 
@@ -48,8 +48,8 @@ init(Partition, FittingDetails) ->
 %% @doc Processing an input involves sending it to both the fitting
 %%      specified by the argument (possibly the sink), and to the
 %%      output.
--spec process(term(), state()) -> {ok, state()}.
-process(Input, #state{p=Partition, fd=FittingDetails}=State) ->
+-spec process(term(), boolean(), state()) -> {ok, state()}.
+process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     Tee = case FittingDetails#fitting_details.arg of
               sink ->
                   proplists:get_value(

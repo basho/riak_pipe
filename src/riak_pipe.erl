@@ -112,6 +112,20 @@
 %%      will be used to choose the working vnode from a
 %%      `riak_core_ring'.  (Very similar to the `chash_keyfun' bucket
 %%      property used in `riak_kv'.)
+%%</dd><dt>
+%%      `nval'
+%%</dt><dd>
+%%      Either a positive integer, or a function of arity 1 that
+%%      returns a positive integer.  This field determines the maximum
+%%      number of vnodes that might be asked to handle the input.  If
+%%      a worker is unable to process an input on a given vnode, it
+%%      can ask to have the input sent to a different vnode.  Up to
+%%      `nval' vnodes will be tried in this manner.
+%%
+%%      If `nval' is an integer, that static number is used for all
+%%      inputs.  If `nval' is a function, the function is evaluated as
+%%      `Fun(Input)' (much like `chashfun'), and is expected to return
+%%      a positive integer.
 %%</dd></dl>
 %%
 %%      Defined elements of the `Options' list are:

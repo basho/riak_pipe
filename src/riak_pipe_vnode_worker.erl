@@ -36,19 +36,29 @@
 %%      store the `Parition' and `FittingDetails' arguments in its
 %%      state, as it will need them to send outputs later.  The
 %%      `ModuleState' returned from this function will be passed to
-%%      the `process/2' function later.
+%%      the `process/3' function later.
 %%
 %% ```
 %% process(Input :: term(),
+%%         LastInPreflist :: boolean(),
 %%         ModuleState :: term())
-%%   -> {ok, NewModuleState :: term()}.
+%%   -> {ok, NewModuleState :: term()}
+%%     |forward_preflist.
 %% '''
 %%
-%%      The `process/2' function is called once for each input
+%%      The `process/3' function is called once for each input
 %%      delivered to the worker.  The module should do whatever
 %%      processing is needed, sending outputs if appropriate.  The
-%%      `NewModuleState' returned from `process/2' will be passed back
+%%      `NewModuleState' returned from `process/3' will be passed back
 %%      in on the next input.
+%%
+%%      `LastInPreflist' is an indicator as to whether this worker is
+%%      the last in the partition preflist for this input.  When this
+%%      parameter is `false', the function may return the atom
+%%      `forward_preflist' to have the input sent to the next vnode in
+%%      the prefence list.  When is parameter is `true', returning
+%%      `forward_preflist' will cause an error trace message to be
+%%      generated, with the reason `preflist_exhausted'.
 %%
 %% ```
 %% done(ModuleState :: term()) -> ok.
@@ -125,8 +135,10 @@
         ]).
 
 -include("riak_pipe.hrl").
+-include("riak_pipe_log.hrl").
 
--record(state, {details :: riak_pipe_fitting:details(),
+-record(state, {partition :: riak_pipe_vnode:partition(),
+                details :: riak_pipe_fitting:details(),
                 vnode :: pid(),
                 modstate :: term()}).
 -opaque state() :: #state{}.
@@ -135,7 +147,7 @@
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [{init,2},
-     {process,2},
+     {process,3},
      {done,1}];
 behaviour_info(_Other) ->
     undefined.
@@ -155,7 +167,7 @@ start_link(Partition, VnodePid, FittingDetails) ->
 %% @doc Send input to the worker.  Note: this should only be called
 %%      by the vnode that owns the worker, as the result of the worker
 %%      asking for its next input.
--spec send_input(pid(), term()) -> ok.
+-spec send_input(pid(), done | {term(), riak_core_apl:preflist()}) -> ok.
 send_input(WorkerPid, Input) ->
     gen_fsm:send_event(WorkerPid, {input, Input}).
 
@@ -186,7 +198,7 @@ send_output(Output, FromPartition, Details) ->
                   riak_pipe_vnode:partition(),
                   riak_pipe_fitting:details(),
                   riak_pipe_vnode:qtimeout()) ->
-         ok.
+         ok | {error, term()}.
 send_output(Output, FromPartition,
             #fitting_details{output=Fitting}=Details,
             Timeout) ->
@@ -223,11 +235,21 @@ recurse_input(Input, FromPartition, Details) ->
                     riak_pipe_vnode:partition(),
                     riak_pipe_fitting:details(),
                     riak_pipe_vnode:qtimeout()) ->
-         ok.
+         ok | {error, term()}.
+recurse_input(Input, FromPartition, Details, Timeout) ->
+    recurse_input(Input, FromPartition, Details, Timeout, []).
+
+-spec recurse_input(term(),
+                    riak_pipe_vnode:partition(),
+                    riak_pipe_fitting:details(),
+                    riak_pipe_vnode:qtimeout(),
+                    riak_core_apl:preflist()) ->
+         ok | {error, term()}.
 recurse_input(Input, FromPartition,
               #fitting_details{fitting=Fitting}=Details,
-              Timeout) ->
-    send_output(Input, FromPartition, Details, Fitting, Timeout).
+              Timeout, UsedPreflist) ->
+    send_output(Input, FromPartition, Details,
+                Fitting, Timeout, UsedPreflist).
 
 %% @doc Send output from the given fitting to a specific fitting.
 %%      This is most often used to send output to the sink, but also
@@ -236,22 +258,32 @@ recurse_input(Input, FromPartition,
 -spec send_output(term(), riak_pipe_vnode:partition(),
                   riak_pipe_fitting:details(), riak_pipe:fitting(),
                   riak_pipe_vnode:qtimeout()) ->
-         ok.
+         ok | {error, term()}.
+send_output(Output, FromPartition, Details, FittingOverride, Timeout) ->
+    send_output(Output, FromPartition, Details, FittingOverride, Timeout, []).
+
+-spec send_output(term(), riak_pipe_vnode:partition(),
+                  riak_pipe_fitting:details(), riak_pipe:fitting(),
+                  riak_pipe_vnode:qtimeout(),
+                  riak_core_apl:preflist()) ->
+         ok | {error, term()}.
 send_output(Output, FromPartition,
             #fitting_details{name=Name}=_Details,
             FittingOverride,
-            Timeout) ->
+            Timeout, UsedPreflist) ->
     case FittingOverride#fitting.chashfun of
         sink ->
             riak_pipe:result(Name, FittingOverride, Output),
             ok;
         follow ->
-            ok = riak_pipe_vnode:queue_work(
-                   FittingOverride, Output, Timeout,
-                   riak_pipe_vnode:hash_for_partition(FromPartition));
+            %% TODO: should 'follow' use the original preflist (in
+            %%       case of failover)?
+            riak_pipe_vnode:queue_work(
+              FittingOverride, Output, Timeout, UsedPreflist,
+              riak_pipe_vnode:hash_for_partition(FromPartition));
         _ ->
-            ok = riak_pipe_vnode:queue_work(
-                   FittingOverride, Output, Timeout)
+            riak_pipe_vnode:queue_work(
+              FittingOverride, Output, Timeout, UsedPreflist)
     end.
 
 %%%===================================================================
@@ -269,7 +301,8 @@ init([Partition, VnodePid, #fitting_details{module=Module}=FittingDetails]) ->
     try
         {ok, ModState} = Module:init(Partition, FittingDetails),
         {ok, initial_input_request,
-         #state{details=FittingDetails,
+         #state{partition=Partition,
+                details=FittingDetails,
                 vnode=VnodePid,
                 modstate=ModState},
          0}
@@ -308,7 +341,7 @@ initial_input_request(timeout, State) ->
 %%      implementing module to archive itself, if the worker exports
 %%      that functionality.  When the archiving process has finished,
 %%      the worker terminates normally.
--spec wait_for_input({input, done | term()}
+-spec wait_for_input({input, done | {term(), riak_core_apl:preflist()}}
                     |{handoff, term()}
                     |archive,
                      state()) ->
@@ -317,8 +350,8 @@ initial_input_request(timeout, State) ->
 wait_for_input({input, done}, State) ->
     ok = process_done(State),
     {stop, normal, State}; %%TODO: monitor
-wait_for_input({input, Input}, State) ->
-    NewState = process_input(Input, State),
+wait_for_input({input, {Input, UsedPreflist}}, State) ->
+    NewState = process_input(Input, UsedPreflist, State),
     request_input(NewState),
     {next_state, wait_for_input, NewState};
 wait_for_input({handoff, HandoffState}, State) ->
@@ -372,12 +405,25 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 request_input(#state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:next_input(Vnode, Details#fitting_details.fitting).
 
-%% @doc Process an input - call the implementing module's `process/2'
+%% @doc Process an input - call the implementing module's `process/3'
 %%      function.
--spec process_input(term(), state()) -> state().
-process_input(Input, #state{details=FD, modstate=ModState}=State) ->
+-spec process_input(term(), riak_core_apl:preflist(), state()) -> state().
+process_input(Input, UsedPreflist,
+              #state{details=FD, modstate=ModState}=State) ->
     Module = FD#fitting_details.module,
-    {ok, NewModState} = Module:process(Input, ModState),
+    NVal = (FD#fitting_details.fitting)#fitting.nval,
+    {Result, NewModState} = Module:process(Input,
+                                           length(UsedPreflist) == NVal,
+                                           ModState),
+    case Result of
+        ok ->
+            ok;
+        forward_preflist ->
+            forward_preflist(Input, UsedPreflist, State);
+        {error, Error} ->
+            %% TODO: replace this with T_ERR when merging master
+            ?T(FD, [error], {error, {Error, Input}})
+    end,
     State#state{modstate=NewModState}.
 
 %% @doc Process a done (end-of-inputs) message - call the implementing
@@ -422,3 +468,22 @@ reply_archive(Archive, #state{vnode=Vnode, details=Details}) ->
     riak_pipe_vnode:reply_archive(Vnode,
                                   Details#fitting_details.fitting,
                                   Archive).
+
+%% @doc Instead of processing this input here, forward it to the next
+%%      vnode in its preflist.
+%%
+%%      If that forwarding fails, an error trace message will be sent
+%%      under the filter `forward_preflist', listing the error and the
+%%      input.
+-spec forward_preflist(term(), riak_core_apl:preflist(), state()) -> ok.
+forward_preflist(Input, UsedPreflist,
+                 #state{partition=Partition, details=FittingDetails}) ->
+    case recurse_input(Input, Partition, FittingDetails,
+                       noblock, UsedPreflist) of
+        ok -> ok;
+        {error, Error} ->
+            %% TODO: replace with T_ERRO when merging master
+            ?T(FittingDetails,
+               [forward_preflist],
+               {error, Error, Input})
+    end.

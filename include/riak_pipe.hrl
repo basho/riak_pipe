@@ -2,7 +2,8 @@
         {
           pid :: pid(),
           ref :: reference(),
-          chashfun :: riak_pipe_vnode:chashfun()
+          chashfun :: riak_pipe_vnode:chashfun(),
+          nval :: riak_pipe_vnode:nval()
         }).
 
 -record(fitting_details,
@@ -20,7 +21,8 @@
           name :: term(),
           module :: atom(),
           arg :: term(),
-          chashfun :: riak_pipe_vnode:chashfun()
+          chashfun :: riak_pipe_vnode:chashfun(),
+          nval = 1 :: riak_pipe_vnode:nval()
         }).
 
 -record(pipe_result,
