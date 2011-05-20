@@ -407,11 +407,10 @@ example_transform() ->
 
 generic_transform(MsgFun, DriverFun, ExecOpts, NumFittings) ->
     MsgFunThenSendFun = fun(Input, Partition, FittingDetails) ->
-                                riak_pipe_vnode_worker:send_output(
-                                  MsgFun(Input),
-                                  Partition,
-                                  FittingDetails),
-                                ok
+                                ok = riak_pipe_vnode_worker:send_output(
+                                       MsgFun(Input),
+                                       Partition,
+                                       FittingDetails)
                         end,
     {ok, Head, Sink} =
         riak_pipe:exec(
@@ -701,10 +700,10 @@ exception_test_() ->
         fun(Head, _Sink) ->
                 ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
                 (catch riak_pipe_fitting:crash(Head, fun() -> exit(die) end)),
-                {error, worker_startup_failed} =
+                {error, [worker_startup_failed]} =
                     riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
                 %% Again, just for fun ... still fails
-                {error, worker_startup_failed} =
+                {error, [worker_startup_failed]} =
                     riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
                 exit({success_so_far, collect_results(_Sink, 100)})
         end,
@@ -751,7 +750,7 @@ exception_test_() ->
                 Fourth = lists:nth(4, FittingPids),
                 (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(diedie) end)),
                 timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,worker_startup_failed} =
+                {error,[worker_startup_failed]} =
                     riak_pipe_vnode:queue_work(Head, 30),
                 riak_pipe_fitting:eoi(Head),
                 exit({success_so_far, collect_results(_Sink, 100)})
@@ -768,7 +767,7 @@ exception_test_() ->
                 Last = lists:last(FittingPids),
                 (catch riak_pipe_fitting:crash(Last, fun() -> exit(diedie) end)),
                 timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,worker_startup_failed} =
+                {error,[worker_startup_failed]} =
                     riak_pipe_vnode:queue_work(Head, 30),
                 riak_pipe_fitting:eoi(Head),
                 exit({success_so_far, collect_results(_Sink, 100)})
@@ -791,11 +790,10 @@ exception_test_() ->
                 riak_pipe_fitting:eoi(Head)
         end,
     XFormDecrOrCrashFun = fun(Input, Partition, FittingDetails) ->
-                                  riak_pipe_vnode_worker:send_output(
-                                    DecrOrCrashFun(Input),
-                                    Partition,
-                                    FittingDetails),
-                                  ok
+                                  ok = riak_pipe_vnode_worker:send_output(
+                                         DecrOrCrashFun(Input),
+                                         Partition,
+                                         FittingDetails)
                           end,
     {foreach,
      prepare_runtime(),
@@ -899,7 +897,7 @@ exception_test_() ->
                                             module=riak_pipe_w_crash,
                                             arg=init_exit,
                                             chashfun=follow}], ErrLog),
-                       {error, worker_startup_failed} =
+                       {error, [worker_startup_failed]} =
                            riak_pipe_vnode:queue_work(Head, x),
                        riak_pipe_fitting:eoi(Head),
                        {eoi, [], []} = collect_results(Sink, 500)
@@ -914,7 +912,7 @@ exception_test_() ->
                                             module=riak_pipe_w_crash,
                                             arg=init_badreturn,
                                             chashfun=follow}], ErrLog),
-                       {error, worker_startup_failed} =
+                       {error, [worker_startup_failed]} =
                            riak_pipe_vnode:queue_work(Head, x),
                        riak_pipe_fitting:eoi(Head),
                        {eoi, [], []} = collect_results(Sink, 500)
@@ -933,7 +931,7 @@ exception_test_() ->
                        PipeLen = length(Started),
                        [Ps] = extract_trace_errors(Trace), % exactly one error!
                        %% io:format(user, "Ps = ~p\n", [Ps]),
-                       {badmatch,{error,worker_limit_reached}} =
+                       {badmatch,{error,[worker_limit_reached]}} =
                            proplists:get_value(error, Ps)
                end}
       end,
@@ -954,7 +952,7 @@ exception_test_() ->
                        ok = riak_pipe_vnode:queue_work(Head1, 100),
                        timer:sleep(100),
                        %% At worker limit, can't even start 1st worker @ Head2
-                       {error, worker_limit_reached} =
+                       {error, [worker_limit_reached]} =
                            riak_pipe_vnode:queue_work(Head2, 100),
                        {timeout, [], Trace1} = collect_results(Sink1, 500),
                        {timeout, [], Trace2} = collect_results(Sink2, 500),

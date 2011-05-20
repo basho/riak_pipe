@@ -200,7 +200,7 @@ queue_work(Fitting, Input, Timeout) ->
 %%      (`chashfun') on the input.
 -spec queue_work(riak_pipe:fitting(), term(), qtimeout(),
                  riak_core_apl:preflist()) ->
-         ok | {error, qerror()}.
+         ok | {error, [qerror()]}.
 queue_work(#fitting{chashfun=follow}=Fitting,
            Input, Timeout, UsedPreflist) ->
     %% this should only happen if someone sets up a pipe with
@@ -231,19 +231,38 @@ queue_work(#fitting{chashfun=HashFun}=Fitting,
 %%</dd></dl>
 -spec queue_work(riak_pipe:fitting(), term(),
                  qtimeout(), riak_core_apl:preflist(), chash()) ->
-         ok | {error, qerror()}.
-queue_work(#fitting{nval=NVal}=Fitting,
-           Input, Timeout, UsedPreflist, Hash) ->
+         ok | {error, [qerror()]}.
+queue_work(Fitting, Input, Timeout, UsedPreflist, Hash) ->
+    queue_work_erracc(Fitting, Input, Timeout, UsedPreflist, Hash, []).
+
+%% @doc Internal implementation of queue_work, to accumulate errors
+%%      returned by each failed vnode enqueue for cumulative failure
+%%      return.
+-spec queue_work_erracc(riak_pipe:fitting(), term(),
+                        qtimeout(), riak_core_apl:preflist(), chash(),
+                        [qerror()]) ->
+         ok | {error, [qerror()]}.
+queue_work_erracc(#fitting{nval=NVal}=Fitting,
+                  Input, Timeout, UsedPreflist, Hash, ErrAcc) ->
     case remaining_preflist(Input, Hash, NVal, UsedPreflist) of
         [NextPref|_] ->
             case queue_work_send(Fitting, Input, Timeout,
                                  [NextPref|UsedPreflist]) of
                 ok -> ok;
-                {error, _} ->
-                    queue_work(Fitting, Input, Timeout, UsedPreflist, Hash)
+                {error, Error} ->
+                    queue_work_erracc(Fitting, Input, Timeout,
+                                      [NextPref|UsedPreflist], Hash,
+                                      [Error|ErrAcc])
             end;
         [] ->
-            {error, preflist_exhausted}
+            if ErrAcc == [] ->
+                    %% may happen if a fitting worker asks to forward
+                    %% the input, but there is no more preflist to
+                    %% forward to
+                    {error, [preflist_exhausted]};
+               true ->
+                    {error, ErrAcc}
+            end
     end.
 
 %% @doc Compute the elements of the preflist that have not been
