@@ -485,6 +485,8 @@ format_name(Name) ->
 -spec is_iolist(term()) -> boolean().
 is_iolist(Name) when is_list(Name) ->
     lists:all(fun is_iolist/1, Name);
+is_iolist(Name) when is_binary(Name) ->
+    true;
 is_iolist(Name) when is_integer(Name), Name >= 0, Name =< 255 ->
     true;
 is_iolist(_) ->

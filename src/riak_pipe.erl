@@ -448,17 +448,9 @@ example_tick(TickLen, NumTicks, ChainLen) ->
     example_tick(TickLen, 1, NumTicks, ChainLen).
 
 example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
-    {ok, _Ring} = riak_core_ring_manager:get_my_ring(),
     Specs = [#fitting_spec{name=list_to_atom("tick_pass" ++ integer_to_list(F_num)),
                            module=riak_pipe_w_pass,
                            partfun = fun(_) -> 0 end}
-             %% partfun=fun(X) ->
-             %%     DocIdx = riak_core_util:chash_key({X,X}),
-             %%     Nodes = riak_core_node_watcher:nodes(riak_pipe),
-             %%     [{{Part,_},_}] = riak_core_apl:get_apl_ann(
-             %%                        DocIdx, 1, _Ring, Nodes),
-             %%     Part
-             %% end}
              || F_num <- lists:seq(1, ChainLen)],
     {ok, Head, Sink} = riak_pipe:exec(Specs, [{log, sink},
                                               {trace, all}]),
@@ -475,10 +467,25 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
 -ifdef(TEST).
 
 extract_trace_errors(Trace) ->
-    [Ps || {_, {trace, [error], {error, Ps}}} <- Trace].
+    [Ps || {_, {trace, _, {error, Ps}}} <- Trace].
+
+%% extract_trace_vnode_failures(Trace) ->
+%%     [Partition || {_, {trace, _, {vnode_failure, Partition}}} <- Trace].
 
 extract_fitting_died_errors(Trace) ->
-    [X || {_, {trace, [error], {vnode, {fitting_died, _}} = X}} <- Trace].
+    [X || {_, {trace, _, {vnode, {fitting_died, _}} = X}} <- Trace].
+
+extract_queued(Trace) ->
+    [{Partition, X} ||
+        {_, {trace, _, {vnode, {queued, Partition, X}}}} <- Trace].
+
+extract_queue_full(Trace) ->
+    [Partition ||
+        {_, {trace, _, {vnode, {queue_full, Partition, _}}}} <- Trace].
+
+extract_unblocking(Trace) ->
+    [Partition ||
+        {_, {trace, _, {vnode, {unblocking, Partition}}}} <- Trace].
 
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
@@ -564,6 +571,13 @@ teardown_runtime() ->
      end.    
 
 basic_test_() ->
+    AllLog = [{log, sink}, {trace, all}],
+    OrderFun = fun(Head, _Sink) ->
+                    ok = riak_pipe_vnode:queue_work(Head, 1),
+                    riak_pipe_fitting:eoi(Head),
+                    ok
+           end,
+    MultBy2 = fun(X) -> 2 * X end,
     {foreach,
      prepare_runtime(),
      teardown_runtime(),
@@ -589,131 +603,98 @@ basic_test_() ->
                        [{"sum reduce", {a, [55]}},
                         {"sum reduce", {b, [155]}}] = lists:sort(Res)
                end}
+      end,
+      fun(_) ->
+              {"pipeline order",
+               fun() ->
+                       {eoi, Res, Trace} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             AllLog, 5),
+                       [{_, 32}] = Res,
+                       0 = length(extract_trace_errors(Trace)),
+                       Qed = extract_queued(Trace),
+                       %% NOTE: The msg to the sink doesn't appear in Trace
+                       [1,2,4,8,16] = [X || {_, X} <- Qed]
+               end}
+      end,
+      fun(_) ->
+              {"trace filtering",
+               fun() ->
+                       {eoi, _Res, Trace1} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             [{log,sink}, {trace, [eoi]}], 5),
+                       {eoi, _Res, Trace2} = 
+                           generic_transform(MultBy2, OrderFun, 
+                                             [{log,sink}, {trace, all}], 5),
+                       %% Looking too deeply into the format of the trace
+                       %% messages, since they haven't gelled yet, is madness.
+                       length(Trace1) < length(Trace2)
+               end}
       end
      ]
     }.
 
 exception_test_() ->
-    AllLog = [{log, sink}, {trace, [error]}],
+    AllLog = [{log, sink}, {trace, all}],
+    ErrLog = [{log, sink}, {trace, [error]}],
+
+    %% DecrOrCrashFun is usually used with the riak_pipe_w_xform
+    %% fitting: at each fitting, the xform worker will decrement the
+    %% count by one.  If the count ever gets to zero, then the worker
+    %% will exit.  So, we want a worker to crash if the pipeline
+    %% length > input # at head of pipeline.
     DecrOrCrashFun = fun(0) -> exit(blastoff);
                         (N) -> N - 1
                      end,
-    XBad1 = fun(Head, _Sink) ->
-                    ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
-                    ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                    ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
-                    ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
-                    riak_pipe_fitting:eoi(Head),
-                    ok
-           end,
-    XBad2 =
-        fun(Head, _Sink) ->
-                [ok = riak_pipe_vnode:queue_work(Head, N) ||
-                    N <- lists:seq(0,2)],
-                ok = riak_pipe_vnode:queue_work(Head, 500),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    TailWorkerCrash =
+
+    Sleep1Fun = fun(X) ->
+                        timer:sleep(1),
+                        X
+                end,
+    Send_one_100 =
         fun(Head, _Sink) ->
                 ok = riak_pipe_vnode:queue_work(Head, 100),
+                %% Sleep so that we don't have workers being shutdown before
+                %% the above work item gets to the end of the pipe.
                 timer:sleep(100),
-                ok = riak_pipe_vnode:queue_work(Head, 1),
-                riak_pipe_fitting:eoi(Head),
-                ok
+                riak_pipe_fitting:eoi(Head)
         end,
-    VnodeCrash =
+    Send_onehundred_100 =
         fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 100),
+                [ok = riak_pipe_vnode:queue_work(Head, 100) ||
+                    _ <- lists:seq(1,100)],
+                %% Sleep so that we don't have workers being shutdown before
+                %% the above work item gets to the end of the pipe.
                 timer:sleep(100),
-                kill_all_pipe_vnodes(),
-                timer:sleep(100),
-                riak_pipe_fitting:eoi(Head),
-                ok
+                riak_pipe_fitting:eoi(Head)
         end,
-    HeadFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
-                (catch riak_pipe_fitting:crash(Head, fun() -> exit(die) end)),
-                {error, worker_startup_failed} =
-                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                %% Again, just for fun ... still fails
-                {error, worker_startup_failed} =
-                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    MiddleFittingNormal =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-
-                %% Aside: exercise riak_pipe_fitting:workers/1.
-                %% There's a single worker on vnode 0, whee.
-                {ok, [0]} = riak_pipe_fitting:workers(hd(FittingPids)),
-
-                %% Aside: send fitting bogus messages
-                gen_fsm:send_event(hd(FittingPids), bogus_message),
-                {error, unknown} =
-                    gen_fsm:sync_send_event(hd(FittingPids), bogus_message),
-                gen_fsm:sync_send_all_state_event(hd(FittingPids), bogus_message),
-                hd(FittingPids) ! bogus_message,
-
-                %% Aside: send bogus done message
-                MyRef = Head#fitting.ref,
-                ok = gen_fsm:sync_send_event(hd(FittingPids),
-                                             {done, MyRef, asdf}),
-
-                Third = lists:nth(3, FittingPids),
-                (catch riak_pipe_fitting:crash(Third, fun() -> exit(normal) end)),
-                Fourth = lists:nth(4, FittingPids),
-                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(normal) end)),
-                %% This message will be lost in the middle of the pipe,
-                %% but we'll be able to notice it via extract_trace_errors/1.
-                ok = riak_pipe_vnode:queue_work(Head, 30),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    MiddleFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-                Third = lists:nth(3, FittingPids),
-                (catch riak_pipe_fitting:crash(Third, fun() -> exit(diedie) end)),
-                Fourth = lists:nth(4, FittingPids),
-                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(diedie) end)),
-                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,worker_startup_failed} =
-                    riak_pipe_vnode:queue_work(Head, 30),
-                riak_pipe_fitting:eoi(Head),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    %% TODO: It isn't clear to me if TailFittingCrash is really any different
-    %%       than MiddleFittingCrash.  I'm trying to exercise the patch in
-    %%       commit cb0447f3c46 but am not having much luck.  {sigh}
-    TailFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-                Last = lists:last(FittingPids),
-                (catch riak_pipe_fitting:crash(Last, fun() -> exit(diedie) end)),
-                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,worker_startup_failed} =
-                    riak_pipe_vnode:queue_work(Head, 30),
-                riak_pipe_fitting:eoi(Head),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
+    XFormDecrOrCrashFun = fun(Input, Partition, FittingDetails) ->
+                                  riak_pipe_vnode_worker:send_output(
+                                    DecrOrCrashFun(Input),
+                                    Partition,
+                                    FittingDetails),
+                                  ok
+                          end,
+    DieFun = fun() ->
+                     exit(diedie)
+             end,
     {foreach,
      prepare_runtime(),
      teardown_runtime(),
      [fun(_) ->
+              XBad1 =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                          ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
+                          ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(XBad1)",
                fun() ->
                        {eoi, Res, Trace} =
-                           generic_transform(fun lists:sum/1, XBad1, AllLog, 1),
+                           generic_transform(fun lists:sum/1, XBad1, ErrLog, 1),
                        [{_, 6}, {_, 15}, {_, 33}] = lists:sort(Res),
                        [{_, {trace, [error], {error, Ps}}}] = Trace,
                        error = proplists:get_value(type, Ps),
@@ -722,81 +703,314 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              XBad2 =
+                  fun(Head, _Sink) ->
+                          [ok = riak_pipe_vnode:queue_work(Head, N) ||
+                              N <- lists:seq(0,2)],
+                          ok = riak_pipe_vnode:queue_work(Head, 500),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(XBad2)",
                fun() ->
+                       %% 3 fittings, send 0, 1, 2, 500
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(DecrOrCrashFun,
                                                     XBad2,
-                                                    AllLog, 3)),
+                                                    ErrLog, 3)),
                        [{_, 497}] = Res,
                        3 = length(extract_trace_errors(Trace))
                end}
       end,
       fun(_) ->
+              TailWorkerCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                          timer:sleep(100),
+                          ok = riak_pipe_vnode:queue_work(Head, 1),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(TailWorkerCrash)",
                fun() ->
                        {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
                                                              TailWorkerCrash,
-                                                             AllLog, 2),
+                                                             ErrLog, 2),
                        [{_, 98}] = Res,
                        1 = length(extract_trace_errors(Trace))
                end}
       end,
       fun(_) ->
+              VnodeCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                          timer:sleep(100),
+                          kill_all_pipe_vnodes(),
+                          timer:sleep(100),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(VnodeCrash)",
                fun() ->
                        {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
                                                              VnodeCrash,
-                                                             AllLog, 2),
+                                                             ErrLog, 2),
                        [{_, 98}] = Res,
                        0 = length(extract_trace_errors(Trace))
                end}
       end,
       fun(_) ->
+              HeadFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                          (catch riak_pipe_fitting:crash(Head, DieFun)),
+                          {error, worker_startup_failed} =
+                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          %% Again, just for fun ... still fails
+                          {error, worker_startup_failed} =
+                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(HeadFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(fun lists:sum/1,
                                                     HeadFittingCrash,
-                                                    AllLog, 1)),
+                                                    ErrLog, 1)),
                        [{_, 6}] = Res,
                        1 = length(extract_fitting_died_errors(Trace))
                end}
       end,
       fun(_) ->
+              MiddleFittingNormal =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+
+                          %% Aside: exercise riak_pipe_fitting:workers/1.
+                          %% There's a single worker on vnode 0, whee.
+                          {ok,[0]} = riak_pipe_fitting:workers(hd(FittingPids)),
+
+                          %% Aside: send fitting bogus messages
+                          gen_fsm:send_event(hd(FittingPids), bogus_message),
+                          {error, unknown} =
+                              gen_fsm:sync_send_event(hd(FittingPids),
+                                                      bogus_message),
+                          gen_fsm:sync_send_all_state_event(hd(FittingPids),
+                                                            bogus_message),
+                          hd(FittingPids) ! bogus_message,
+
+                          %% Aside: send bogus done message
+                          MyRef = Head#fitting.ref,
+                          ok = gen_fsm:sync_send_event(hd(FittingPids),
+                                                       {done, MyRef, asdf}),
+
+                          Third = lists:nth(3, FittingPids),
+                          (catch riak_pipe_fitting:crash(Third, fun() ->
+                                                                   exit(normal)
+                                                                end)),
+                          Fourth = lists:nth(4, FittingPids),
+                          (catch riak_pipe_fitting:crash(Fourth, fun() ->
+                                                                   exit(normal)
+                                                                 end)),
+                          %% This message will be lost in the middle of the
+                          %% pipe, but we'll be able to notice it via
+                          %% extract_trace_errors/1.
+                          ok = riak_pipe_vnode:queue_work(Head, 30),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(MiddleFittingNormal)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(DecrOrCrashFun,
                                                     MiddleFittingNormal,
-                                                    AllLog, 5)),
+                                                    ErrLog, 5)),
                        [{_, 15}] = Res,
                        2 = length(extract_fitting_died_errors(Trace)),
                        1 = length(extract_trace_errors(Trace))
                end}
       end,
       fun(_) ->
+              MiddleFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          Third = lists:nth(3, FittingPids),
+                          (catch riak_pipe_fitting:crash(Third, DieFun)),
+                          Fourth = lists:nth(4, FittingPids),
+                          (catch riak_pipe_fitting:crash(Fourth, DieFun)),
+                          %% try to avoid racing w/pipeline shutdown
+                          timer:sleep(100),
+                          {error,worker_startup_failed} =
+                              riak_pipe_vnode:queue_work(Head, 30),
+                          riak_pipe_fitting:eoi(Head),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(MiddleFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(DecrOrCrashFun,
                                                     MiddleFittingCrash,
-                                                    AllLog, 5)),
+                                                    ErrLog, 5)),
                        [{_, 15}] = Res,
                        5 = length(extract_fitting_died_errors(Trace)),
                        0 = length(extract_trace_errors(Trace))
                end}
       end,
       fun(_) ->
+              %% TODO: It isn't clear to me if TailFittingCrash is
+              %% really any different than MiddleFittingCrash.  I'm
+              %% trying to exercise the patch in commit cb0447f3c46
+              %% but am not having much luck.  {sigh}
+              TailFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          Last = lists:last(FittingPids),
+                          (catch riak_pipe_fitting:crash(Last, DieFun)),
+                          %% try to avoid racing w/pipeline shutdown
+                          timer:sleep(100),
+                          {error,worker_startup_failed} =
+                              riak_pipe_vnode:queue_work(Head, 30),
+                          riak_pipe_fitting:eoi(Head),
+                          exit({success_so_far,
+                                collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(TailFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(DecrOrCrashFun,
                                                     TailFittingCrash,
-                                                    AllLog, 5)),
+                                                    ErrLog, 5)),
                        [{_, 15}] = Res,
                        5 = length(extract_fitting_died_errors(Trace)),
                        0 = length(extract_trace_errors(Trace))
+               end}
+      end,
+      fun(_) ->
+              {"worker init crash 1",
+               fun() ->
+                       {ok, Head, Sink} =
+                           riak_pipe:exec(
+                             [#fitting_spec{name="init crash",
+                                            module=riak_pipe_w_crash,
+                                            arg=init_exit,
+                                            partfun=follow}], ErrLog),
+                       {error, worker_startup_failed} =
+                           riak_pipe_vnode:queue_work(Head, x),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, [], []} = collect_results(Sink, 500)
+               end}
+      end,
+      fun(_) ->
+              {"worker init crash 2 (only init arg differs from #1 above)",
+               fun() ->
+                       {ok, Head, Sink} =
+                           riak_pipe:exec(
+                             [#fitting_spec{name="init crash",
+                                            module=riak_pipe_w_crash,
+                                            arg=init_badreturn,
+                                            partfun=follow}], ErrLog),
+                       {error, worker_startup_failed} =
+                           riak_pipe_vnode:queue_work(Head, x),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, [], []} = collect_results(Sink, 500)
+               end}
+      end,
+      fun(_) ->
+              {"worker limit for one pipe",
+               fun() ->
+                       PipeLen = 90,
+                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                                                             Send_one_100,
+                                                             AllLog, PipeLen),
+                       [] = Res,
+                       Started = [x || {_, {trace, _,
+                                            {fitting, init_started}}} <- Trace],
+                       PipeLen = length(Started),
+                       [Ps] = extract_trace_errors(Trace), % exactly one error!
+                       %% io:format(user, "Ps = ~p\n", [Ps]),
+                       {badmatch,{error,worker_limit_reached}} =
+                           proplists:get_value(error, Ps)
+               end}
+      end,
+      fun(_) ->
+              {"worker limit for multiple pipes",
+               fun() ->
+                       PipeLen = 90,
+                       Spec = lists:duplicate(
+                                PipeLen,
+                                #fitting_spec{name="worker limit mult pipes",
+                                              module=riak_pipe_w_xform,
+                                              arg=XFormDecrOrCrashFun,
+                                              partfun=fun(_) -> 0 end}),
+                       {ok, Head1, Sink1} =
+                           riak_pipe:exec(Spec, AllLog),
+                       {ok, Head2, Sink2} =
+                           riak_pipe:exec(Spec, AllLog),
+                       ok = riak_pipe_vnode:queue_work(Head1, 100),
+                       timer:sleep(100),
+                       %% At worker limit, can't even start 1st worker @ Head2
+                       {error, worker_limit_reached} =
+                           riak_pipe_vnode:queue_work(Head2, 100),
+                       {timeout, [], Trace1} = collect_results(Sink1, 500),
+                       {timeout, [], Trace2} = collect_results(Sink2, 500),
+                       [_] = extract_trace_errors(Trace1), % exactly one error!
+                       [] = extract_queued(Trace2)
+               end}
+      end,
+      fun(_) ->
+              {"under per-vnode worker limit for 1 pipe + many vnodes",
+               fun() ->
+                       %% 20 * Ring size > worker limit, if indeed the worker
+                       %% limit were enforced per node instead of per vnode.
+                       PipeLen = 20,
+                       {ok, _Ring} = riak_core_ring_manager:get_my_ring(),
+                       PF=fun(X) ->
+                                  DocIdx = riak_core_util:chash_key({X,X}),
+                                  Nodes = riak_core_node_watcher:nodes(riak_pipe),
+                                  [{{Part,_},_}] = riak_core_apl:get_apl_ann(
+                                                     DocIdx, 1, _Ring, Nodes),
+                                  Part
+                          end,
+                       Spec = lists:duplicate(
+                                PipeLen,
+                                #fitting_spec{name="foo",
+                                              module=riak_pipe_w_xform,
+                                              arg=XFormDecrOrCrashFun,
+                                              partfun=PF}),
+                       {ok, Head1, Sink1} =
+                           riak_pipe:exec(Spec, AllLog),
+                       [ok = riak_pipe_vnode:queue_work(Head1, X) ||
+                           X <- lists:seq(101, 200)],
+                       riak_pipe_fitting:eoi(Head1),
+                       {eoi, Res, Trace1} = collect_results(Sink1, 500),
+                       100 = length(Res),
+                       [] = extract_trace_errors(Trace1)
+               end}
+      end,
+      fun(_) ->
+              {"Per worker queue limit enforcement",
+               fun() ->
+                       {eoi, Res, Trace} =
+                           generic_transform(Sleep1Fun,
+                                             Send_onehundred_100,
+                                             AllLog, 1),
+                       100 = length(Res),
+                       Full = length(extract_queue_full(Trace)),
+                       NoLongerFull = length(extract_unblocking(Trace)),
+                       Full = NoLongerFull
                end}
       end
      ]
@@ -865,5 +1079,15 @@ validate_test_() ->
                end}
       end
      ]}.
+
+should_be_the_very_last_test() ->
+    Leftovers = [{Pid, X} ||
+                    Pid <- processes(),
+                    {eunit, X} <- element(2, process_info(Pid, dictionary))],
+    [] = Leftovers.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% NOTE: Do not put any EUnit tests after should_be_the_very_last_test()
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -endif.  % TEST
