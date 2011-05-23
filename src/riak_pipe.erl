@@ -650,6 +650,46 @@ basic_test_() ->
                        %% messages, since they haven't gelled yet, is madness.
                        length(Trace1) < length(Trace2)
                end}
+      end,
+      fun(_) ->
+              {"recursive countdown test #1",
+               fun() ->
+                       Spec = [#fitting_spec{name=counter,
+                                             module=riak_pipe_w_rec_countdown,
+                                             chashfun=fun chash:key_of/1}],
+                       {ok, Head, Sink} = riak_pipe:exec(Spec, []),
+                       riak_pipe_vnode:queue_work(Head, 3),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, Res, []} = riak_pipe:collect_results(Sink),
+                       [{counter,0},{counter,1},{counter,2},{counter,3}] = Res
+               end}
+      end,
+      fun(_) ->
+              {"recursive countdown test #2 (nondeterministic)",
+               fun() ->
+                       Spec = [#fitting_spec{name=counter,
+                                             module=riak_pipe_w_rec_countdown,
+                                             chashfun=fun chash:key_of/1,
+                                             arg=testeoi}],
+                       Options = [{trace,[restart]},{log,sink}],
+                       {ok, Head, Sink} = riak_pipe:exec(Spec, Options),
+                       riak_pipe_vnode:queue_work(Head, 3),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, Res, Trc} = riak_pipe:collect_results(Sink),
+                       [{counter,0},{counter,0},{counter,0},
+                        {counter,1},{counter,2},{counter,3}] = Res,
+                       try
+                           [{counter,
+                             {trace,[restart],{vnode,{restart,_}}}}] = Trc
+                       catch error:{badmatch,[]} ->
+                               %% If `Trace' is empty, the done/eoi race was
+                               %% not triggered.  So, in theory, we should
+                               %% re-run the test.  Except that EUnit tests
+                               %% aren't good at checking non-deterministic
+                               %% tests.
+                               ok
+                       end
+               end}
       end
      ]
     }.

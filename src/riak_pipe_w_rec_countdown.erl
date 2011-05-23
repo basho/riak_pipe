@@ -66,6 +66,10 @@
 %%      `{counter,0}', then the test failed.  If `Trace' is empty, the
 %%      done/eoi race was not triggered, and the test should be
 %%      re-run.
+%%
+%% NOTE: This test code has been copied to the EUnit tests in riak_pipe.erl,
+%%       into the basic_test_() collection.
+
 -module(riak_pipe_w_rec_countdown).
 -behaviour(riak_pipe_vnode_worker).
 
