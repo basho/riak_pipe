@@ -435,7 +435,7 @@ process_input(Input, UsedPreflist,
         State#state{modstate=NewModState}
     catch Type:Error ->
             processing_error(Type, Error, FD, ModState, Module, State, Input),
-            State
+            exit(processing_error)
     end.            
 
 %% @private

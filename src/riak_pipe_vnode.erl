@@ -64,10 +64,12 @@
 -type qerror() :: worker_limit_reached
                 | worker_startup_failed
                 | timeout
+                | forwarding
                 | preflist_exhausted.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
+-define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
@@ -514,9 +516,12 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                                send_done(Worker#worker.fitting),
                                remove_worker(Worker, State);
                            _ ->
-                               ?T(Worker#worker.details, [restart],
-                                  {vnode, {restart, Partition}}),
-                               %% TODO: what do to with failed input?
+                               if Reason /= processing_error ->
+                                       %% the sink has not yet been
+                                       %% alerted of this input's failure
+                                       worker_error(Reason, Worker, State);
+                                  true -> ok
+                               end,
                                restart_worker(Worker, State)
                        end;
                    none ->
@@ -569,7 +574,8 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
                               usedpreflist=UsedPreflist},
                  Sender, #state{partition=Partition}=State) ->
     case worker_for(Fitting, State) of
-        {ok, Worker} ->
+        {ok, Worker} when (Worker#worker.details)#fitting_details.module
+                          /= ?FORWARD_WORKER_MODULE ->
             case add_input(Worker, Input, Sender, TO, UsedPreflist) of
                 {ok, NewWorker} ->
                     ?T(NewWorker#worker.details, [queue],
@@ -584,6 +590,11 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
                 timeout ->
                     {reply, {error, timeout}, replace_worker(Worker, State)}
             end;
+        {ok, _RestartForwardingWorker} ->
+            %% this is a forwarding worker for a failed-restart
+            %% fitting - don't enqueue any more inputs, just reject
+            %% and let the requester enqueue elswhere
+            {reply, {error, forwarding}, State};
         worker_limit_reached ->
             %% TODO: log/trace this event
             %% Except we don't have details here to associate with a trace
@@ -648,6 +659,32 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
               [Type, Reason, erlang:get_stacktrace()]),
             worker_startup_failed
     end.
+
+%% @doc Start a new worker to forward inputs for the given `Fitting'.
+%%      This is only used when a worker failed, and then also failed
+%%      to restart.  The worker created here simply clears the
+%%      existing queue for forwarding all of the inputs to the next
+%%      vnode in their preflist.
+-spec new_fwd_worker(riak_pipe_fitting:details(), state()) ->
+         {ok, #worker{}}.
+new_fwd_worker(FittingDetails,
+               #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
+    %% Override the fitting's normal behavior,
+    %% and force it to just forward inputs
+    ForwardDetails = FittingDetails#fitting_details{
+                       module=?FORWARD_WORKER_MODULE},
+    {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
+                  Sup, ForwardDetails),
+    erlang:link(Pid),
+    ?T(FittingDetails, [fwd_worker], {vnode, {start, P}}),
+    {ok, #worker{pid=Pid,
+                 fitting=ForwardDetails#fitting_details.fitting,
+                 details=ForwardDetails,
+                 state=init,
+                 inputs_done=false,
+                 q=queue:new(),
+                 q_limit=WQL,
+                 blocking=queue:new()}}.
 
 %% @doc Add an input to the worker's queue.  If the worker is
 %%      `waiting', send the input to it, skipping the queue.  If the
@@ -864,24 +901,68 @@ remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
 %%      and the requests in its block queue are sent `{error, fail}'
 %%      responses.
 -spec restart_worker(#worker{}, state()) -> state().
-restart_worker(Worker, State) ->
+restart_worker(#worker{details=FD}=Worker,
+               #state{partition=Partition}=State)
+  when FD#fitting_details.module /= ?FORWARD_WORKER_MODULE ->
     CleanState = remove_worker(Worker, State),
     case new_worker(Worker#worker.fitting, CleanState) of
         {ok, NewWorker} ->
+            ?T(Worker#worker.details, [restart],
+               {vnode, {restart, Partition}}),
             CopiedWorker = NewWorker#worker{
                              q=Worker#worker.q,
                              blocking=Worker#worker.blocking,
                              inputs_done=Worker#worker.inputs_done},
             replace_worker(CopiedWorker, CleanState);
         _Error ->
+            ?T(Worker#worker.details, [restart_fail],
+               {vnode, {restart_fail, Partition}}),
             %% fail blockers, so they resubmit elsewhere
-            [ reply_to_blocker(Blocker, {error, fail})
+            [ reply_to_blocker(Blocker, {error, worker_restart_fail})
               || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
-            %% ask fitting to find a better place for the other inputs
-            riak_pipe_fitting:send_fail(Worker#worker.fitting,
-                                        queue:to_list(Worker#worker.q)),
-            CleanState
-    end.
+            %% spin up a stub worker to forward the inputs
+            %% (don't want to tie up the vnode doing this sending)
+            {ok, FwdWorker} = new_fwd_worker(Worker#worker.details,
+                                             CleanState),
+            %% an alternate config might be to set inputs_done to
+            %% true, unconditionally, so the worker is cleaned up as
+            %% soon as it is done forwarding; but if the vnode gets
+            %% another input for this fitting after recycling the
+            %% worker, it will try to restart it again, which is
+            %% likely to fail again, and such repeated restarts could
+            %% lead to a heavy load on this vnode
+            CopiedWorker = FwdWorker#worker{
+                             q=Worker#worker.q,
+                             inputs_done=Worker#worker.inputs_done},
+            replace_worker(CopiedWorker, CleanState)
+    end;
+restart_worker(#worker{details=FD, q=Queue}=Worker,
+               #state{partition=Partition}=State) ->
+    ?T(FD, [restart_fail], {vnode, {restart_fail, Partition}}),
+    %% this was a forwarding worker for a failed-restart fitting; if
+    %% it crashed, there's something *really* wrong - log the errors
+    %% and dump it
+    [ ?T_ERR(FD, {restart_dropped, I}) || I <- queue:to_list(Queue) ],
+    if Worker#worker.inputs_done ->
+            %% tell the fitting this worker has exited, so it doesn't
+            %% hang around waiting
+            send_done(FD#fitting_details.fitting);
+       true ->
+            %% the fitting hasn't yet sent eoi - let the done message
+            %% be sent after that happens
+            ok
+    end,
+    remove_worker(Worker, State).
+
+worker_error(Reason, #worker{details=FD}=Worker, State) ->
+    Fields = record_info(fields, fitting_details),
+    FieldPos = lists:zip(Fields, lists:seq(2, length(Fields)+1)),
+    DsList = [{Field, element(Pos, FD)} || {Field, Pos} <- FieldPos],
+    ?T_ERR(FD, [{module, FD#fitting_details.module},
+                {partition, State#state.partition},
+                {details, DsList},
+                {reason, Reason},
+                {state, Worker#worker.state}]).
 
 %% @doc Reply to a request that has been waiting in a worker's blocked
 %%      queue.
