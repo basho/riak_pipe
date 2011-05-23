@@ -657,121 +657,20 @@ basic_test_() ->
 exception_test_() ->
     AllLog = [{log, sink}, {trace, all}],
     ErrLog = [{log, sink}, {trace, [error]}],
+
+    %% DecrOrCrashFun is usually used with the riak_pipe_w_xform
+    %% fitting: at each fitting, the xform worker will decrement the
+    %% count by one.  If the count ever gets to zero, then the worker
+    %% will exit.  So, we want a worker to crash if the pipeline
+    %% length > input # at head of pipeline.
     DecrOrCrashFun = fun(0) -> exit(blastoff);
                         (N) -> N - 1
                      end,
+
     Sleep1Fun = fun(X) ->
                         timer:sleep(1),
                         X
                 end,
-    XBad1 = fun(Head, _Sink) ->
-                    ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
-                    ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                    ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
-                    ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
-                    riak_pipe_fitting:eoi(Head),
-                    ok
-           end,
-    XBad2 =
-        fun(Head, _Sink) ->
-                [ok = riak_pipe_vnode:queue_work(Head, N) ||
-                    N <- lists:seq(0,2)],
-                ok = riak_pipe_vnode:queue_work(Head, 500),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    TailWorkerCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 100),
-                timer:sleep(100),
-                ok = riak_pipe_vnode:queue_work(Head, 1),
-                riak_pipe_fitting:eoi(Head),
-                ok
-        end,
-    VnodeCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 100),
-                timer:sleep(100),
-                kill_all_pipe_vnodes(),
-                timer:sleep(100),
-                riak_pipe_fitting:eoi(Head),
-                ok
-        end,
-    HeadFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
-                (catch riak_pipe_fitting:crash(Head, fun() -> exit(die) end)),
-                {error, [worker_startup_failed]} =
-                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                %% Again, just for fun ... still fails
-                {error, [worker_startup_failed]} =
-                    riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    MiddleFittingNormal =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-
-                %% Aside: exercise riak_pipe_fitting:workers/1.
-                %% There's a single worker on vnode 0, whee.
-                {ok, [0]} = riak_pipe_fitting:workers(hd(FittingPids)),
-
-                %% Aside: send fitting bogus messages
-                gen_fsm:send_event(hd(FittingPids), bogus_message),
-                {error, unknown} =
-                    gen_fsm:sync_send_event(hd(FittingPids), bogus_message),
-                gen_fsm:sync_send_all_state_event(hd(FittingPids), bogus_message),
-                hd(FittingPids) ! bogus_message,
-
-                %% Aside: send bogus done message
-                MyRef = Head#fitting.ref,
-                ok = gen_fsm:sync_send_event(hd(FittingPids),
-                                             {done, MyRef, asdf}),
-
-                Third = lists:nth(3, FittingPids),
-                (catch riak_pipe_fitting:crash(Third, fun() -> exit(normal) end)),
-                Fourth = lists:nth(4, FittingPids),
-                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(normal) end)),
-                %% This message will be lost in the middle of the pipe,
-                %% but we'll be able to notice it via extract_trace_errors/1.
-                ok = riak_pipe_vnode:queue_work(Head, 30),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    MiddleFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-                Third = lists:nth(3, FittingPids),
-                (catch riak_pipe_fitting:crash(Third, fun() -> exit(diedie) end)),
-                Fourth = lists:nth(4, FittingPids),
-                (catch riak_pipe_fitting:crash(Fourth, fun() -> exit(diedie) end)),
-                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,[worker_startup_failed]} =
-                    riak_pipe_vnode:queue_work(Head, 30),
-                riak_pipe_fitting:eoi(Head),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
-    %% TODO: It isn't clear to me if TailFittingCrash is really any different
-    %%       than MiddleFittingCrash.  I'm trying to exercise the patch in
-    %%       commit cb0447f3c46 but am not having much luck.  {sigh}
-    TailFittingCrash =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 20),
-                timer:sleep(100),
-                [{_, BuilderPid, _, _}] = riak_pipe_builder_sup:builder_pids(),
-                {ok, FittingPids} = riak_pipe_builder:fitting_pids(BuilderPid),
-                Last = lists:last(FittingPids),
-                (catch riak_pipe_fitting:crash(Last, fun() -> exit(diedie) end)),
-                timer:sleep(100),   %% try to avoid racing w/pipeline shutdown
-                {error,[worker_startup_failed]} =
-                    riak_pipe_vnode:queue_work(Head, 30),
-                riak_pipe_fitting:eoi(Head),
-                exit({success_so_far, collect_results(_Sink, 100)})
-        end,
     Send_one_100 =
         fun(Head, _Sink) ->
                 ok = riak_pipe_vnode:queue_work(Head, 100),
@@ -795,10 +694,22 @@ exception_test_() ->
                                          Partition,
                                          FittingDetails)
                           end,
+    DieFun = fun() ->
+                     exit(diedie)
+             end,
     {foreach,
      prepare_runtime(),
      teardown_runtime(),
      [fun(_) ->
+              XBad1 =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                          ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
+                          ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(XBad1)",
                fun() ->
                        {eoi, Res, Trace} =
@@ -811,8 +722,16 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              XBad2 =
+                  fun(Head, _Sink) ->
+                          [ok = riak_pipe_vnode:queue_work(Head, N) ||
+                              N <- lists:seq(0,2)],
+                          ok = riak_pipe_vnode:queue_work(Head, 500),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(XBad2)",
                fun() ->
+                       %% 3 fittings, send 0, 1, 2, 500
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
                            (catch generic_transform(DecrOrCrashFun,
                                                     XBad2,
@@ -822,6 +741,14 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              TailWorkerCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                          timer:sleep(100),
+                          ok = riak_pipe_vnode:queue_work(Head, 1),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(TailWorkerCrash)",
                fun() ->
                        {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
@@ -832,6 +759,15 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              VnodeCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                          timer:sleep(100),
+                          kill_all_pipe_vnodes(),
+                          timer:sleep(100),
+                          riak_pipe_fitting:eoi(Head),
+                          ok
+                  end,
               {"generic_transform(VnodeCrash)",
                fun() ->
                        {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
@@ -842,6 +778,17 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              HeadFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                          (catch riak_pipe_fitting:crash(Head, DieFun)),
+                          {error, [worker_startup_failed]} =
+                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          %% Again, just for fun ... still fails
+                          {error, [worker_startup_failed]} =
+                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(HeadFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
@@ -853,6 +800,47 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              MiddleFittingNormal =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+
+                          %% Aside: exercise riak_pipe_fitting:workers/1.
+                          %% There's a single worker on vnode 0, whee.
+                          {ok,[0]} = riak_pipe_fitting:workers(hd(FittingPids)),
+
+                          %% Aside: send fitting bogus messages
+                          gen_fsm:send_event(hd(FittingPids), bogus_message),
+                          {error, unknown} =
+                              gen_fsm:sync_send_event(hd(FittingPids),
+                                                      bogus_message),
+                          gen_fsm:sync_send_all_state_event(hd(FittingPids),
+                                                            bogus_message),
+                          hd(FittingPids) ! bogus_message,
+
+                          %% Aside: send bogus done message
+                          MyRef = Head#fitting.ref,
+                          ok = gen_fsm:sync_send_event(hd(FittingPids),
+                                                       {done, MyRef, asdf}),
+
+                          Third = lists:nth(3, FittingPids),
+                          (catch riak_pipe_fitting:crash(Third, fun() ->
+                                                                   exit(normal)
+                                                                end)),
+                          Fourth = lists:nth(4, FittingPids),
+                          (catch riak_pipe_fitting:crash(Fourth, fun() ->
+                                                                   exit(normal)
+                                                                 end)),
+                          %% This message will be lost in the middle of the
+                          %% pipe, but we'll be able to notice it via
+                          %% extract_trace_errors/1.
+                          ok = riak_pipe_vnode:queue_work(Head, 30),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(MiddleFittingNormal)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
@@ -865,6 +853,25 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              MiddleFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          Third = lists:nth(3, FittingPids),
+                          (catch riak_pipe_fitting:crash(Third, DieFun)),
+                          Fourth = lists:nth(4, FittingPids),
+                          (catch riak_pipe_fitting:crash(Fourth, DieFun)),
+                          %% try to avoid racing w/pipeline shutdown
+                          timer:sleep(100),
+                          {error,[worker_startup_failed]} =
+                              riak_pipe_vnode:queue_work(Head, 30),
+                          riak_pipe_fitting:eoi(Head),
+                          exit({success_so_far, collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(MiddleFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
@@ -877,6 +884,28 @@ exception_test_() ->
                end}
       end,
       fun(_) ->
+              %% TODO: It isn't clear to me if TailFittingCrash is
+              %% really any different than MiddleFittingCrash.  I'm
+              %% trying to exercise the patch in commit cb0447f3c46
+              %% but am not having much luck.  {sigh}
+              TailFittingCrash =
+                  fun(Head, _Sink) ->
+                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                          timer:sleep(100),
+                          [{_, BuilderPid, _, _}] =
+                              riak_pipe_builder_sup:builder_pids(),
+                          {ok, FittingPids} =
+                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          Last = lists:last(FittingPids),
+                          (catch riak_pipe_fitting:crash(Last, DieFun)),
+                          %% try to avoid racing w/pipeline shutdown
+                          timer:sleep(100),
+                          {error,[worker_startup_failed]} =
+                              riak_pipe_vnode:queue_work(Head, 30),
+                          riak_pipe_fitting:eoi(Head),
+                          exit({success_so_far,
+                                collect_results(_Sink, 100)})
+                  end,
               {"generic_transform(TailFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
