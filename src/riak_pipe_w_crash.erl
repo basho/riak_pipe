@@ -34,6 +34,9 @@
                 fd :: riak_pipe_fitting:details()}).
 -opaque state() :: #state{}.
 
+%% name of the table reMEMbering restarts
+-define(MEM, ?MODULE).
+
 %% @doc Initialization just stows the partition and fitting details in
 %%      the module's state, for sending outputs in {@link process/3}.
 -spec init(riak_pipe_vnode:partition(),
@@ -45,8 +48,40 @@ init(Partition, FittingDetails) ->
             exit(crash);
         init_badreturn ->
             crash;
+        init_restartfail ->
+            case is_restart(Partition, FittingDetails) of
+                true ->
+                    restart_crash;
+                false ->
+                    {ok, #state{p=Partition, fd=FittingDetails}}
+            end;
         _ ->
             {ok, #state{p=Partition, fd=FittingDetails}}
+    end.
+
+is_restart(Partition, FittingDetails) ->
+    Fitting = FittingDetails#fitting_details.fitting,
+    %% set the fitting process as the heir, such that the ets
+    %% table survives when this worker exits, but gets cleaned
+    %% up when the pipeline shuts down
+    case (catch ets:new(?MEM, [set, {keypos, 1},
+                               named_table, public,
+                               {heir, Fitting#fitting.pid, ok}])) of
+        {'EXIT',{badarg,_}} ->
+            %% table was already created
+            ok;
+        ?MEM ->
+            %% table is now created
+            ok
+    end,
+    case ets:lookup(?MEM, Partition) of
+        [] ->
+            %% no record - not restart;
+            %% make a record for the next start to check
+            ets:insert(?MEM, {Partition, true}),
+            false;
+        [{Partition, true}] ->
+            true
     end.
 
 %% @doc Process just sends `Input' directly to the next fitting.  This
@@ -59,6 +94,15 @@ process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     ?T(FittingDetails, [], {processing, Input}),
     case FittingDetails#fitting_details.arg of 
         Input ->
+            if Input == init_restartfail ->
+                    %% "worker restart failure, input forwarding" test in
+                    %% riak_pipe exploits this timer:sleep to test both
+                    %% moments of forwarding: those items left in a
+                    %% failed-restart worker's queue, as well as those items
+                    %% sent to a worker that is already forwarding
+                    timer:sleep(1000);
+               true -> ok
+            end,
             ?T(FittingDetails, [], {crashing, Input}),
             exit(process_input_crash);
         _ ->
