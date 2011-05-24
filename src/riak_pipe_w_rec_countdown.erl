@@ -27,8 +27,7 @@
 %%
 %%```
 %% Spec = [#fitting_spec{name=counter,
-%%                       module=riak_pipe_w_rec_countdown,
-%%                       chashfun=fun chash:key_of/1}],
+%%                       module=riak_pipe_w_rec_countdown}],
 %% {ok, Head, Sink} = riak_pipe:exec(Spec, []),
 %% riak_pipe_vnode:queue_work(Head, 3),
 %% riak_pipe_fitting:eoi(Head),
@@ -50,7 +49,6 @@
 %%```
 %% Spec = [#fitting_spec{name=counter,
 %%                       module=riak_pipe_w_rec_countdown,
-%%                       chashfun=fun chash:key_of/1,
 %%                       arg=testeoi}],
 %% Options = [{trace,[restart]},{log,sink}],
 %% {ok, Head, Sink} = riak_pipe:exec(Spec, Options),

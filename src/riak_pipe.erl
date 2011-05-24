@@ -28,8 +28,7 @@
 %% ```
 %% % define the pipeline
 %% PipelineSpec = [#fitting_spec{name="passer"
-%%                               module=riak_pipe_w_pass,
-%%                               chashfun=fun chash:key_of/1}],
+%%                               module=riak_pipe_w_pass}],
 %%
 %% % start things up
 %% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec, []),
@@ -123,6 +122,9 @@
 %%      will be used to choose the working vnode from a
 %%      `riak_core_ring'.  (Very similar to the `chash_keyfun' bucket
 %%      property used in `riak_kv'.)
+%%
+%%      The default is `fun chash:key_of/1', which will distribute
+%%      inputs according to the SHA-1 hash of the input.
 %%</dd><dt>
 %%      `nval'
 %%</dt><dd>
@@ -659,8 +661,7 @@ basic_test_() ->
               {"recursive countdown test #1",
                fun() ->
                        Spec = [#fitting_spec{name=counter,
-                                             module=riak_pipe_w_rec_countdown,
-                                             chashfun=fun chash:key_of/1}],
+                                             module=riak_pipe_w_rec_countdown}],
                        {ok, Head, Sink} = riak_pipe:exec(Spec, []),
                        riak_pipe_vnode:queue_work(Head, 3),
                        riak_pipe_fitting:eoi(Head),
@@ -673,7 +674,6 @@ basic_test_() ->
                fun() ->
                        Spec = [#fitting_spec{name=counter,
                                              module=riak_pipe_w_rec_countdown,
-                                             chashfun=fun chash:key_of/1,
                                              arg=testeoi}],
                        Options = [{trace,[restart]},{log,sink}],
                        {ok, Head, Sink} = riak_pipe:exec(Spec, Options),
@@ -1047,8 +1047,7 @@ exception_test_() ->
                                 PipeLen,
                                 #fitting_spec{name="foo",
                                               module=riak_pipe_w_xform,
-                                              arg=XFormDecrOrCrashFun,
-                                              chashfun=fun chash:key_of/1}),
+                                              arg=XFormDecrOrCrashFun}),
                        {ok, Head1, Sink1} =
                            riak_pipe:exec(Spec, AllLog),
                        [ok = riak_pipe_vnode:queue_work(Head1, X) ||
@@ -1082,7 +1081,6 @@ exception_test_() ->
                        Spec = [#fitting_spec{name=restarter,
                                              module=riak_pipe_w_crash,
                                              arg=init_restartfail,
-                                             chashfun=fun chash:key_of/1,
                                              %% use nval=2 to get some failover
                                              nval=2}],
                        Opts = [{log, sink},
