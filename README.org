@@ -597,6 +597,20 @@ index for the KV vnode storing the data.  This allows the behavior to
 efficiently ask the KV vnode directly for the data, instead of working
 through the =riak_kv_get_fsm=.
 
+** Internal: riak_pipe_w_crash
+
+The "crash" behavior is used in testing Riak Pipe.  Using argument
+values and inputs, it allows a pipeline to be setup that can later be
+forced to crash in specific ways.
+
+** Internal: riak_pipe_w_fwd
+
+The "forward" behavior is used when a vnode worker exits abnormally,
+and then also fails to restart.  This fitting behavior simply returns
+=forward_preflist= for every input it receives.  Note that writing a
+fitting spec to use =riak_pipe_w_fwd= means that the fitting will only
+ever produce errors due to preflist exhaustion.
+
 * Riak KV MapReduce Emulation
 
 The =riak_kv_mrc_pipe= module in the Riak KV application provides a
