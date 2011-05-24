@@ -173,10 +173,14 @@ in =include/riak_pipe.hrl=.
                     %% fitting_details structure passed to the worker
                     %% module (useful for initial configuration)
 
-   chashfun = fun(_) -> <<0:160/integer>> end
+   chashfun = fun(_) -> <<0:160/integer>> end,
                               %% arity-1 function() | 'follow'
                               %% specification of how to distribute
                               %% inputs for this fitting
+
+   nval = 1 %% positive integer, default 1, indicates how many vnodes
+            %% may be asked to handle an input for this fitting,
+            %% before declaring the input unfit for processing
 }
 #+END_SRC
 
@@ -339,7 +343,7 @@ explicitly.
 ** Behavior
 
 Fitting behaviors have it easy.  They need only expose three
-functions: =init/2=, =process/2=, and =done/1=.  All of the details
+functions: =init/2=, =process/3=, and =done/1=.  All of the details
 about consuming items from the queue maintained in the vnode is
 handled by the =riak_pipe_vnode_worker= module.
 
@@ -354,7 +358,7 @@ When a vnode starts up a worker, the behavior module's =init/2=
 function is called with the partition number of the owning vnode, and
 the details of the fitting the worker handles input for.  The =init/2=
 function should return a tuple of the form ={ok, State}=, where
-=State= is a term that will be passed to the module's =process/2=
+=State= is a term that will be passed to the module's =process/3=
 function later.
 
 Unless your behavior will not be producing any output, it will want to
@@ -363,15 +367,25 @@ required parameters for sending output.
 
 *** Process
 
-The behavior's =process/2= module will be called each time a new input
-is pulled from the queue.  The parameters to =process/2= will be the
-new input and the module's state (initialized in =init/2=).  The
-function must return a tuple of the form ={ok, NewState}= where
-=NewState= is a potentially modified version of the state passed in
-(this =NewState= will be passed in as the state when evaluating the
-next input, much like the "accumulator" of a list-fold function).
+The behavior's =process/3= module will be called each time a new input
+is pulled from the queue.  The parameters to =process/3= will be the
+new input, a "last in preflist" indicator
+(see [[Aside: Preflist Forwarding and NVal]] below), and the module's
+state (initialized in =init/2=).  The function must return a tuple of
+the form ={Result, NewState}= where =NewState= is a potentially
+modified version of the state passed in (this =NewState= will be
+passed in as the state when evaluating the next input, much like the
+"accumulator" of a list-fold function).  The =Result= may be any of
+the following:
 
-If processing the given input should produce some output, =process/2=
+  - =ok= :: processing succeeded, and work may begin on the next input
+  - =forward_preflist= :: this input should be forwarded to the next
+       vnode in its preflist, for processing there
+  - ={error, Reason}= :: this input generated an error; it should not
+       be retried on other nodes in the preflist, and an error should
+       be logged
+
+If processing the given input should produce some output, =process/3=
 should call =riak_pipe_vnode_worker:send_output/3=:
 
 #+BEGIN_SRC erlang
@@ -423,7 +437,7 @@ another, a behavior should export =archive/1= and =handoff/2=
 functions).
 
 First, on the old node, the =archive/1= function will be called with
-the last state returned from =init/2= or =process/2=.  The function
+the last state returned from =init/2= or =process/3=.  The function
 should return a tuple of the form ={ok, Archive}=, where =Archive= is
 any serializable term that represents the state needing to be
 transferred to the new node.  The worker process terminates soon after
@@ -480,6 +494,35 @@ riak_pipe_log:log(FittingDetails, "my log message").
 ?T(FittingDetails, [], "my trace message").
 riak_pipe_log:trace(FittingDetails, [?MODULE], "my log message").
 #+END_SRC
+
+*** Aside: Preflist Forwarding and Nval
+
+As noted in the [[Process]] section above, a fitting behavior may return
+=forward_preflist= as its result.  If it does so, the input will be
+forwarded to the next vnode in its preflist.
+
+"Preflist" is a concept from Riak Core.  The main idea is that it may
+be possible to evaluate an input on any of several different vnodes.
+The preflist is an ordered list of these vnodes.  Its length is
+determined by the =nval= parameter of the fitting's specification.
+
+Riak Pipe uses the preflist in order.  That is, the first vnode in the
+preflist is asked to evaluate the input.  If that vnode's worker asks
+to forward it along, only then is the next vnode in the preflist asked
+to process the input.
+
+When the final vnode in the preflist is given the input for
+processing, it's fitting behavior's =process/3= function will have the
+=LastPreflist= parameter set to =true=.  If the final vnode's worker
+again asks to forward the input, an error is logged (either in the
+SASL log, or via a message to the sink, depending on =log= and =trace=
+execution options).
+
+This same variety of forwarding is used if a vnode worker should exit
+abnormally, and then fail to restart.  All items in the worker's
+blocking queue and working queue, as well as all future inputs sent to
+the vnode for that worker, are forwarded to the next vnode in the
+preflist.
 
 * Included Fittings
 
