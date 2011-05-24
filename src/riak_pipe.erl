@@ -691,6 +691,10 @@ basic_test_() ->
                                %% re-run the test.  Except that EUnit tests
                                %% aren't good at checking non-deterministic
                                %% tests.
+                               ?debugMsg("Warning: recursive countdown test"
+                                         " #2 did not trigger the done/eoi"
+                                         " race it tests."
+                                         " Consider re-running."),
                                ok
                        end
                end}
