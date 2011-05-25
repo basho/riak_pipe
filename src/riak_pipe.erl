@@ -1197,6 +1197,22 @@ exception_test_() ->
                        %% consistent hash means this should be the same
                        ?assertEqual(Requeuer, Forward)
                end}
+      end,
+      fun(_) ->
+              {"Vnode Death",
+               fun() ->
+                       {ok, Head, Sink} =
+                           riak_pipe:exec(
+                             [#fitting_spec{name=vnode_death_test,
+                                            module=riak_pipe_w_crash}],
+                             []),
+                       %% this should kill vnode such that it never
+                       %% responds to the enqueue request
+                       riak_pipe_vnode:queue_work(Head, vnode_killer),
+                       riak_pipe_fitting:eoi(Head),
+                       {eoi, Res, []} = riak_pipe:collect_results(Sink),
+                       ?assertEqual([], Res)
+               end}
       end
      ]
     }.

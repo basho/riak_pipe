@@ -574,6 +574,12 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
                               usedpreflist=UsedPreflist},
                  Sender, #state{partition=Partition}=State) ->
     case worker_for(Fitting, State) of
+        {ok, #worker{details=#fitting_details{module=riak_pipe_w_crash}}}
+          when Input == vnode_killer ->
+            %% this is used by the eunit test named "Vnode Death"
+            %% in riak_pipe:exception_test_; it kills the vnode before
+            %% it has a chance to reply to the queue request
+            exit({riak_pipe_w_crash, vnode_killer});
         {ok, Worker} when (Worker#worker.details)#fitting_details.module
                           /= ?FORWARD_WORKER_MODULE ->
             case add_input(Worker, Input, Sender, TO, UsedPreflist) of
