@@ -296,15 +296,30 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
          ok | {error, term()}.
 queue_work_send(#fitting{ref=Ref}=Fitting,
                 Input, Timeout,
-                [NextPref|_]=UsedPreflist) ->
+                [{Index,Node}|_]=UsedPreflist) ->
+    %% only the master on the node where the vnode is running knows
+    %% the mapping of Index->Pid
+    {ok, VnodePid} = rpc:call(Node,
+                              riak_core_vnode_master,
+                              get_vnode_pid,
+                              [Index, riak_pipe_vnode]),
+    %% monitor in case the vnode is gone before it
+    %% responds to this request
+    MonRef = erlang:monitor(process, VnodePid),
     riak_core_vnode_master:command(
-      NextPref,
+      [{Index, VnodePid}],
       #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
                    usedpreflist=UsedPreflist},
       {raw, Ref, self()},
       riak_pipe_vnode_master),
     %% block until input confirmed queued, for backpressure
-    receive {Ref, Reply} -> Reply end.
+    receive
+        {Ref, Reply} ->
+            erlang:demonitor(MonRef),
+            Reply;
+         {'DOWN',MonRef,process,VnodePid,Reason} ->
+            {error, {vnode_down, Reason}}
+    end.
 
 %% @doc Send end-of-inputs for a fitting to a vnode.  Note: this
 %%      should only be called by `riak_pipe_fitting' processes.  This
