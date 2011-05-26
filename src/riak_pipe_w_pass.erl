@@ -50,11 +50,15 @@ init(Partition, FittingDetails) ->
 %%      the blocking output send has returned.  This can be useful for
 %%      dropping in another pipeline to watching data move through it.
 -spec process(term(), boolean(), state()) -> {ok, state()}.
-process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
-    ?T(FittingDetails, [], {processing, Input}),
-    riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
-    ?T(FittingDetails, [], {processed, Input}),
-    {ok, State}.
+process(Input, _Last, #state{p=Partition, fd=FD}=State) ->
+    if FD#fitting_details.arg == black_hole ->
+            {ok, State};
+       true ->
+            ?T(FD, [], {processing, Input}),
+            riak_pipe_vnode_worker:send_output(Input, Partition, FD),
+            ?T(FD, [], {processed, Input}),
+            {ok, State}
+    end.
 
 %% @doc Unused.
 -spec done(state()) -> ok.
