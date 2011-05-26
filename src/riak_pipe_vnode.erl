@@ -297,21 +297,15 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
 queue_work_send(#fitting{ref=Ref}=Fitting,
                 Input, Timeout,
                 [{Index,Node}|_]=UsedPreflist) ->
-    %% only the master on the node where the vnode is running knows
-    %% the mapping of Index->Pid
-    {ok, VnodePid} = rpc:call(Node,
-                              riak_core_vnode_master,
-                              get_vnode_pid,
-                              [Index, riak_pipe_vnode]),
-    %% monitor in case the vnode is gone before it
-    %% responds to this request
-    MonRef = erlang:monitor(process, VnodePid),
-    riak_core_vnode_master:command(
-      [{Index, VnodePid}],
+    {ok, VnodePid} = riak_core_vnode_master:command_return_vnode(
+      {Index, Node},
       #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
                    usedpreflist=UsedPreflist},
       {raw, Ref, self()},
       riak_pipe_vnode_master),
+    %% monitor in case the vnode is gone before it
+    %% responds to this request
+    MonRef = erlang:monitor(process, VnodePid),
     %% block until input confirmed queued, for backpressure
     receive
         {Ref, Reply} ->
