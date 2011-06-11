@@ -66,11 +66,19 @@
                 | timeout
                 | forwarding
                 | preflist_exhausted.
+-type now() :: {non_neg_integer(),
+                non_neg_integer(),
+                non_neg_integer()}.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
+-record(worker_perf, {started :: now(),
+                       processed = 0 :: non_neg_integer(),
+                       work_time = 0 :: non_neg_integer(),
+                       idle_time = 0 :: non_neg_integer(),
+                       last_time :: now()}).
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
                  details :: #fitting_details{},
@@ -79,7 +87,8 @@
                  q :: queue(),
                  q_limit :: pos_integer(),
                  blocking :: queue(),
-                 handoff :: undefined | {waiting, term()} }).
+                 handoff :: undefined | {waiting, term()},
+                 perf :: #worker_perf{}}).
 -record(worker_handoff, {fitting :: #fitting{},
                          queue :: queue(),
                          blocking :: queue(),
@@ -521,7 +530,8 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                              Reason} of
                            {true, true, normal} ->
                                ?T(Worker#worker.details, [done],
-                                  {vnode, {done, Partition}}),
+                                  {vnode, {done, Partition,
+                                           proplist_perf(Worker)}}),
                                send_done(Worker#worker.fitting),
                                remove_worker(Worker, State);
                            _ ->
@@ -652,6 +662,8 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
                 erlang:link(Pid),
+                Start = now(),
+                Perf = #worker_perf{started=Start, last_time=Start},
                 ?T(Details, [worker], {vnode, {start, P}}),
                 {ok, #worker{pid=Pid,
                              fitting=Fitting,
@@ -660,7 +672,8 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                              inputs_done=false,
                              q=queue:new(),
                              q_limit=WQL,
-                             blocking=queue:new()}};
+                             blocking=queue:new(),
+                             perf=Perf}};
             gone ->
                 error_logger:error_msg(
                   "Pipe worker startup failed:"
@@ -711,7 +724,8 @@ add_input(#worker{state=waiting}=Worker,
           Input, _Sender, _TO, UsedPreflist) ->
     %% worker has been waiting for something to enter its queue
     send_input(Worker, {Input, UsedPreflist}),
-    {ok, Worker#worker{state={working, Input}}};
+    PerfWorker = roll_perf(Worker),
+    {ok, PerfWorker#worker{state={working, Input}}};
 add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker,
           Input, Sender, TO, UsedPreflist) ->
     case queue:len(Q) < QL of
@@ -810,7 +824,8 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
 %%      the front one to the end of the work queue, and reply `ok' to
 %%      the process that requested its addition (unblocking it).
 -spec next_input_nohandoff(#worker{}, state()) -> {noreply, state()}.
-next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
+next_input_nohandoff(WorkerUnperf, #state{partition=Partition}=State) ->
+    Worker = roll_perf(WorkerUnperf),
     case queue:out(Worker#worker.q) of
         {{value, {Input, UsedPreflist}}, NewQ} ->
             ?T(Worker#worker.details, [queue],
@@ -1004,7 +1019,7 @@ status_internal(#cmd_status{sender=Sender},
 -spec worker_detail(#worker{}) -> [{atom(), term()}].
 worker_detail(#worker{fitting=Fitting, details=Details,
                       state=State, inputs_done=Done,
-                      q=Q, blocking=B}) ->
+                      q=Q, blocking=B}=Worker) ->
     [{fitting, Fitting#fitting.pid},
      {name, Details#fitting_details.name},
      {module, Details#fitting_details.module},
@@ -1014,7 +1029,43 @@ worker_detail(#worker{fitting=Fitting, details=Details,
              end},
      {inputs_done, Done},
      {queue_length, queue:len(Q)},
-     {blocking_length, queue:len(B)}].
+     {blocking_length, queue:len(B)}
+     |proplist_perf(Worker)].
+
+%% @doc Update the appropriate fields in the worker's performance
+%%      statistics.  This function should be called before updating
+%%      the worker to its next state, as the function depends on
+%%      `#worker.state' to know which fields to update.  That is, if
+%%      the worker has just finished processing input A, this function
+%%      should be called while its state is still set to `{working, A}'.
+-spec roll_perf(#worker{}) -> #worker{}.
+roll_perf(#worker{perf=Perf, state=State}=Worker) ->
+    Now = now(),
+    Duration = timer:now_diff(Now, Perf#worker_perf.last_time),
+    TimedPerf = case State of
+                    {working,_} ->
+                        Perf#worker_perf{
+                          processed=Perf#worker_perf.processed+1,
+                          work_time=Perf#worker_perf.work_time+Duration};
+                    _ ->
+                        Perf#worker_perf{
+                          idle_time=Perf#worker_perf.idle_time+Duration}
+                end,
+    Worker#worker{perf=TimedPerf#worker_perf{last_time=Now}}.
+    
+%% @doc Convert the worker's performance statistics to a proplist, for
+%%      sharing.
+-spec proplist_perf(#worker{}) -> [{atom(), term()}].
+proplist_perf(#worker{perf=Perf, state=State}) ->
+    SinceLast = timer:now_diff(now(), Perf#worker_perf.last_time),
+    {AddWork, AddIdle} = case State of
+                             {working, _} -> {SinceLast, 0};
+                             _            -> {0, SinceLast}
+                         end,
+    [{started, Perf#worker_perf.started},
+     {processed, Perf#worker_perf.processed},
+     {work_time, Perf#worker_perf.work_time + AddWork},
+     {idle_time, Perf#worker_perf.idle_time + AddIdle}].
 
 %% @doc Handle the fold request to start handoff.  Immediately ask all
 %%      `waiting' workers to archive, and note that others should
