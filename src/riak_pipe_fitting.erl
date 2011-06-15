@@ -84,12 +84,9 @@ start_link(Builder, Spec, Output, Options) ->
             Error
     end.
 
-%% @doc Send an end-of-inputs message to the specified fitting
-%%      process (possibly the sink).
+%% @doc Send an end-of-inputs message to the specified fitting process.
 -spec eoi(riak_pipe:fitting()) -> ok.
-eoi(#fitting{chashfun=sink}=Sink) ->
-    riak_pipe:eoi(Sink);
-eoi(#fitting{pid=Pid, ref=Ref}) ->
+eoi(#fitting{pid=Pid, ref=Ref, chashfun=C}) when C =/= sink ->
     gen_fsm:send_event(Pid, {eoi, Ref}).
 
 %% @doc Request the details about this fitting.  The ring parition
@@ -369,7 +366,12 @@ fitting_record(Pid,
 -spec forward_eoi(state()) -> ok.
 forward_eoi(#state{details=Details}) ->
     ?T(Details, [eoi], {fitting, send_eoi}),
-    riak_pipe_fitting:eoi(Details#fitting_details.output).
+    case Details#fitting_details.output of
+        #fitting{chashfun=sink}=Sink ->
+            riak_pipe_sink:eoi(Sink);
+        #fitting{}=Fitting ->
+            riak_pipe_fitting:eoi(Fitting)
+    end.
 
 %% @doc Monitor the given vnode, and add it to our list of workers.
 -spec add_worker(riak_pipe_vnode:partition(), pid(), state()) -> state().

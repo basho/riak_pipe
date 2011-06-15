@@ -52,11 +52,13 @@ start_link() ->
 %% @doc Start a new pipeline builder.  Starts the builder process
 %%      under this supervisor.
 -spec new_pipeline([#fitting_spec{}], riak_pipe:exec_opts()) ->
-         {ok, Head::#fitting{}} | {error, Reason::term()}.
+         {ok, Pipe::#pipe{}} | {error, Reason::term()}.
 new_pipeline(Spec, Options) ->
     case supervisor:start_child(?MODULE, [Spec, Options]) of
         {ok, Pid, Ref} ->
-            riak_pipe_builder:get_first_fitting(Pid, Ref);
+            {ok, Fittings} = riak_pipe_builder:get_fittings(Pid, Ref),
+            {sink, Sink} = lists:keyfind(sink, 1, Options),
+            {ok, #pipe{builder=Pid, fittings=Fittings, sink=Sink}};
         Error ->
             Error
     end.

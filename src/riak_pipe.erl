@@ -31,16 +31,16 @@
 %%                               module=riak_pipe_w_pass}],
 %%
 %% % start things up
-%% {ok, Head, Sink} = riak_pipe:exec(PipelineSpec, []),
+%% {ok, Pipe} = riak_pipe:exec(PipelineSpec, []),
 %%
 %% % send in some work
-%% riak_pipe_vnode:queue_work(Head, "work item 1"),
-%% riak_pipe_vnode:queue_work(Head, "work item 2"),
-%% riak_pipe_vnode:queue_work(Head, "work item 3"),
-%% riak_pipe_fitting:eoi(Head),
+%% riak_pipe:queue_work(Pipe, "work item 1"),
+%% riak_pipe:queue_work(Pipe, "work item 2"),
+%% riak_pipe:queue_work(Pipe, "work item 3"),
+%% riak_pipe:eoi(Pipe),
 %%
 %% % wait for results (alternatively use receive_result/1 repeatedly)
-%% {ok, Results} = riak_pipe:collect_results().
+%% {ok, Results} = riak_pipe:collect_results(Pipe).
 %% '''
 %%
 %%      Many examples are included in the source code, and exported
@@ -56,9 +56,11 @@
          receive_result/1,
          receive_result/2,
          collect_results/1,
-         collect_results/2]).
-%% worker/fitting API
--export([result/3, eoi/1, log/3]).
+         collect_results/2,
+         queue_work/2,
+         queue_work/3,
+         eoi/1
+        ]).
 %% examples
 -export([example/0,
          example_start/0,
@@ -80,9 +82,11 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export_type([fitting/0,
+-export_type([pipe/0,
+              fitting/0,
               fitting_spec/0,
               exec_opts/0]).
+-type pipe() :: #pipe{}.
 -type fitting() :: #fitting{}.
 -type fitting_spec() :: #fitting_spec{}.
 -type exec_opts() :: [exec_option()].
@@ -92,8 +96,8 @@
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
-%%      handle to the head (first) fitting and the sink.  Inputs may
-%%      then be sent to vnodes, tagged with that head fitting.
+%%      handle to the pipeline.  Inputs may then be sent to vnodes,
+%%      tagged with that head fitting.
 %%
 %%      The pipeline is specified as an ordered list of
 %%      `#fitting_spec{}' records.  Each record has the fields:
@@ -174,19 +178,16 @@
 %%      initialization, so it can be a good vector for global
 %%      configuration of general fittings.
 -spec exec([fitting_spec()], exec_opts()) ->
-         {ok, Head::fitting(), Sink::fitting()}.
+         {ok, Pipe::pipe()}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
-    {Sink, SinkOptions} = ensure_sink(Options),
-    TraceOptions = correct_trace(SinkOptions),
-    {ok, Head} = riak_pipe_builder_sup:new_pipeline(Spec, TraceOptions),
-    {ok, Head, Sink}.
+    CorrectOptions = correct_trace(ensure_sink(Options)),
+    riak_pipe_builder_sup:new_pipeline(Spec, CorrectOptions).
 
 %% @doc Ensure that the `{sink, Sink}' exec/2 option is defined
 %%      correctly, or define a fresh one pointing to the current
 %%      process if the option is absent.
--spec ensure_sink(exec_opts()) ->
-         {fitting(), exec_opts()}.
+-spec ensure_sink(exec_opts()) -> exec_opts().
 ensure_sink(Options) ->
     case lists:keyfind(sink, 1, Options) of
         {sink, #fitting{pid=Pid}=Sink} ->
@@ -203,13 +204,13 @@ ensure_sink(Options) ->
                                   _ ->
                                       HFSink
                               end,
-                    {RHFSink, lists:keyreplace(sink, 1, Options, RHFSink)};
+                    lists:keyreplace(sink, 1, Options, RHFSink);
                true ->
                     throw({invalid_sink, nopid})
             end;
         false ->
             Sink = #fitting{pid=self(), ref=make_ref(), chashfun=sink},
-            {Sink, [{sink, Sink}|Options]};
+            [{sink, Sink}|Options];
         _ ->
             throw({invalid_sink, not_fitting})
     end.
@@ -239,26 +240,26 @@ correct_trace(Options) ->
             Options
     end.
 
-%% @doc Send a result to the sink (used by worker processes).  The
-%%      result is delivered as a `#pipe_result{}' record in the sink
-%%      process's mailbox.
--spec result(term(), Sink::fitting(), term()) -> #pipe_result{}.
-result(From, #fitting{pid=Pid, ref=Ref}, Output) ->
-    Pid ! #pipe_result{ref=Ref, from=From, result=Output}.
+%% @doc Send an end-of-inputs message to the head of the pipe.
+-spec eoi(Pipe::pipe()) -> ok.
+eoi(#pipe{fittings=[Head|_]}) ->
+    riak_pipe_fitting:eoi(Head).
 
-%% @doc Send a log message to the sink (used by worker processes and
-%%      fittings).  The message is delivered as a `#pipe_log{}' record
-%%      in the sink process's mailbox.
--spec log(term(), Sink::fitting(), term()) -> #pipe_log{}.
-log(From, #fitting{pid=Pid, ref=Ref}, Msg) ->
-    Pid ! #pipe_log{ref=Ref, from=From, msg=Msg}.
+%% @equiv queue_work(Pipe, Input, infinity)
+queue_work(Pipe, Input) ->
+    queue_work(Pipe, Input, infinity).
 
-%% @doc Send an end-of-inputs message to the sink (used by fittings).
-%%      The message is delivered as a `#pipe_eoi{}' record in the sink
-%%      process's mailbox.
--spec eoi(Sink::fitting()) -> #pipe_eoi{}.
-eoi(#fitting{pid=Pid, ref=Ref}) ->
-    Pid ! #pipe_eoi{ref=Ref}.
+%% @doc Send inputs to the head of the pipe.
+%%
+%%      Note that `Timeout' options are only `infinity' and `noblock',
+%%      not generic durations yet.
+-spec queue_work(Pipe::pipe(),
+                 Input::term(),
+                 Timeout::riak_pipe_vnode:qtimeout())
+         -> ok | {error, riak_pipe_vnode:qerror()}.
+queue_work(#pipe{fittings=[Head|_]}, Input, Timeout)
+  when Timeout =:= infinity; Timeout =:= noblock ->
+    riak_pipe_vnode:queue_work(Head, Input, Timeout).
 
 %% @doc Pull the next pipeline result out of the sink's mailbox.
 %%      The `From' element of the `result' and `log' messages will
@@ -268,20 +269,20 @@ eoi(#fitting{pid=Pid, ref=Ref}) ->
 %%      Passing the #fitting{} structure is only needed for reference
 %%      to weed out misdirected messages from forgotten pipelines.
 %%      A static timeout of five seconds is hard-coded (TODO).
--spec receive_result(Sink::fitting()) ->
+-spec receive_result(pipe()) ->
          {result, {From::term(), Result::term()}}
        | {log, {From::term(), Message::term()}}
        | eoi
        | timeout.
-receive_result(Fitting) ->
-    receive_result(Fitting, 5000).
+receive_result(Pipe) ->
+    receive_result(Pipe, 5000).
 
--spec receive_result(Sink::fitting(), Timeout::integer() | 'infinity') ->
+-spec receive_result(Pipe::pipe(), Timeout::integer() | 'infinity') ->
          {result, {From::term(), Result::term()}}
        | {log, {From::term(), Message::term()}}
        | eoi
        | timeout.
-receive_result(#fitting{ref=Ref}, Timeout) ->
+receive_result(#pipe{sink=#fitting{ref=Ref}}, Timeout) ->
     receive
         #pipe_result{ref=Ref, from=From, result=Result} ->
             {result, {From, Result}};
@@ -311,36 +312,36 @@ receive_result(#fitting{ref=Ref}, Timeout) ->
 %%      to weed out misdirected messages from forgotten pipelines.  A
 %%      static inter-message timeout of five seconds is hard-coded
 %%      (TODO).
--spec collect_results(Sink::fitting()) ->
+-spec collect_results(pipe()) ->
           {eoi | timeout,
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
-collect_results(#fitting{}=Fitting) ->
-    collect_results(Fitting, [], [], 5000).
+collect_results(#pipe{}=Pipe) ->
+    collect_results(Pipe, [], [], 5000).
 
--spec collect_results(Sink::fitting(), Timeout::integer() | 'infinity') ->
+-spec collect_results(pipe(), Timeout::integer() | 'infinity') ->
           {eoi | timeout,
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
-collect_results(#fitting{}=Fitting, Timeout) ->
-    collect_results(Fitting, [], [], Timeout).
+collect_results(#pipe{}=Pipe, Timeout) ->
+    collect_results(Pipe, [], [], Timeout).
 
 %% @doc Internal implementation of collect_results/1.  Just calls
 %%      receive_result/1, and accumulates lists of result and log
 %%      messages.
--spec collect_results(Sink::fitting(),
+-spec collect_results(Pipe::pipe(),
                       ResultAcc::[{From::term(), Result::term()}],
                       LogAcc::[{From::term(), Result::term()}],
                       Timeout::integer() | 'infinity') ->
           {eoi | timeout,
            Results::[{From::term(), Result::term()}],
            Logs::[{From::term(), Message::term()}]}.
-collect_results(Fitting, ResultAcc, LogAcc, Timeout) ->
-    case receive_result(Fitting, Timeout) of
+collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
+    case receive_result(Pipe, Timeout) of
         {result, {From, Result}} ->
-            collect_results(Fitting, [{From,Result}|ResultAcc], LogAcc, Timeout);
+            collect_results(Pipe, [{From,Result}|ResultAcc], LogAcc, Timeout);
         {log, {From, Result}} ->
-            collect_results(Fitting, ResultAcc, [{From,Result}|LogAcc], Timeout);
+            collect_results(Pipe, ResultAcc, [{From,Result}|LogAcc], Timeout);
         End ->
             %% result order shouldn't matter,
             %% but it's useful to have logging output in time order
@@ -357,15 +358,14 @@ collect_results(Fitting, ResultAcc, LogAcc, Timeout) ->
 %% '''
 -spec example() -> {eoi | timeout, list(), list()}.
 example() ->
-    {ok, Head, Sink} = example_start(),
-    example_send(Head),
-    example_receive(Sink).
+    {ok, Pipe} = example_start(),
+    example_send(Pipe),
+    example_receive(Pipe).
 
 %% @doc An example of starting a simple pipe.  Starts a pipe with one
 %%      "pass" fitting.  Sink is pointed at the current process.
 %%      Logging is pointed at the sink.  All tracing is enabled.
--spec example_start() ->
-         {ok, Head::fitting(), Sink::fitting()}.
+-spec example_start() -> {ok, Pipe::pipe()}.
 example_start() ->
     riak_pipe:exec(
       [#fitting_spec{name=empty_pass,
@@ -377,17 +377,17 @@ example_start() ->
 %% @doc An example of sending data into a pipeline.  Queues the string
 %%      `"hello"' for the fitting provided, then signals end-of-inputs
 %%      to that fitting.
--spec example_send(fitting()) -> ok.
-example_send(Head) ->
-    ok = riak_pipe_vnode:queue_work(Head, "hello"),
-    riak_pipe_fitting:eoi(Head).
+-spec example_send(pipe()) -> ok.
+example_send(Pipe) ->
+    ok = riak_pipe:queue_work(Pipe, "hello"),
+    riak_pipe:eoi(Pipe).
 
 %% @doc An example of receiving data from a pipeline.  Reads all
 %%      results sent to the given sink.
--spec example_receive(Sink::fitting()) ->
+-spec example_receive(pipe()) ->
          {eoi | timeout, list(), list()}.
-example_receive(Sink) ->
-    collect_results(Sink).
+example_receive(Pipe) ->
+    collect_results(Pipe).
 
 %% @doc Another example pipeline use.  This one sets up a simple
 %%      "transform" fitting, which expects lists of numbers as
@@ -400,9 +400,9 @@ example_receive(Sink) ->
 -spec example_transform() -> {eoi | timeout, list(), list()}.
 example_transform() ->
     MsgFun = fun lists:sum/1,
-    DriverFun = fun(Head, _Sink) ->
-                        ok = riak_pipe_vnode:queue_work(Head, lists:seq(1, 10)),
-                        riak_pipe_fitting:eoi(Head),
+    DriverFun = fun(Pipe) ->
+                        ok = riak_pipe:queue_work(Pipe, lists:seq(1, 10)),
+                        riak_pipe:eoi(Pipe),
                         ok
                 end,
     generic_transform(MsgFun, DriverFun, [], 1).
@@ -414,7 +414,7 @@ generic_transform(MsgFun, DriverFun, ExecOpts, NumFittings) ->
                                        Partition,
                                        FittingDetails)
                         end,
-    {ok, Head, Sink} =
+    {ok, Pipe} =
         riak_pipe:exec(
           lists:duplicate(NumFittings,
                           #fitting_spec{name="generic transform",
@@ -422,8 +422,8 @@ generic_transform(MsgFun, DriverFun, ExecOpts, NumFittings) ->
                                         arg=MsgFunThenSendFun,
                                         chashfun=fun zero_part/1}),
           ExecOpts),
-    ok = DriverFun(Head, Sink),
-    example_receive(Sink).
+    ok = DriverFun(Pipe),
+    example_receive(Pipe).
 
 %% @doc Another example pipeline use.  This one sets up a simple
 %%      "reduce" fitting, which expects tuples of the form
@@ -439,7 +439,7 @@ example_reduce() ->
     SumFun = fun(_Key, Inputs, _Partition, _FittingDetails) ->
                      {ok, [lists:sum(Inputs)]}
              end,
-    {ok, Head, Sink} =
+    {ok, Pipe} =
         riak_pipe:exec(
           [#fitting_spec{name="sum reduce",
                          module=riak_pipe_w_reduce,
@@ -447,19 +447,19 @@ example_reduce() ->
                          chashfun=fun riak_pipe_w_reduce:chashfun/1}],
           []),
     [ok,ok,ok,ok,ok] =
-        [ riak_pipe_vnode:queue_work(Head, {a, N})
+        [ riak_pipe:queue_work(Pipe, {a, N})
           || N <- lists:seq(1, 5) ],
     [ok,ok,ok,ok,ok] =
-        [ riak_pipe_vnode:queue_work(Head, {b, N})
+        [ riak_pipe:queue_work(Pipe, {b, N})
           || N <- lists:seq(11, 15) ],
     [ok,ok,ok,ok,ok] =
-        [ riak_pipe_vnode:queue_work(Head, {a, N})
+        [ riak_pipe:queue_work(Pipe, {a, N})
           || N <- lists:seq(6, 10) ],
     [ok,ok,ok,ok,ok] =
-        [ riak_pipe_vnode:queue_work(Head, {b, N})
+        [ riak_pipe:queue_work(Pipe, {b, N})
           || N <- lists:seq(16, 20) ],
-    riak_pipe_fitting:eoi(Head),
-    example_receive(Sink).
+    riak_pipe:eoi(Pipe),
+    example_receive(Pipe).
 
 example_tick(TickLen, NumTicks, ChainLen) ->
     example_tick(TickLen, 1, NumTicks, ChainLen).
@@ -469,17 +469,17 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
                            module=riak_pipe_w_pass,
                            chashfun = fun zero_part/1}
              || F_num <- lists:seq(1, ChainLen)],
-    {ok, Head, Sink} = riak_pipe:exec(Specs, [{log, sink},
-                                              {trace, all}]),
+    {ok, Pipe} = riak_pipe:exec(Specs, [{log, sink},
+                                        {trace, all}]),
     [begin
-         [riak_pipe_vnode:queue_work(Head, {tick, {TickSeq, X}, now()}) ||
+         [riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()}) ||
              X <- lists:seq(1, BatchSize)],
          if TickSeq /= NumTicks -> timer:sleep(TickLen);
             true                -> ok
          end
      end || TickSeq <- lists:seq(1, NumTicks)],
-    riak_pipe_fitting:eoi(Head),
-    example_receive(Sink).
+    riak_pipe:eoi(Pipe),
+    example_receive(Pipe).
 
 %% @doc dummy chashfun for tests and examples
 %%      sends everything to partition 0
@@ -598,9 +598,9 @@ teardown_runtime() ->
 
 basic_test_() ->
     AllLog = [{log, sink}, {trace, all}],
-    OrderFun = fun(Head, _Sink) ->
-                    ok = riak_pipe_vnode:queue_work(Head, 1),
-                    riak_pipe_fitting:eoi(Head),
+    OrderFun = fun(Pipe) ->
+                    ok = riak_pipe:queue_work(Pipe, 1),
+                    riak_pipe:eoi(Pipe),
                     ok
            end,
     MultBy2 = fun(X) -> 2 * X end,
@@ -662,10 +662,10 @@ basic_test_() ->
                fun() ->
                        Spec = [#fitting_spec{name=counter,
                                              module=riak_pipe_w_rec_countdown}],
-                       {ok, Head, Sink} = riak_pipe:exec(Spec, []),
-                       riak_pipe_vnode:queue_work(Head, 3),
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, Res, []} = riak_pipe:collect_results(Sink),
+                       {ok, Pipe} = riak_pipe:exec(Spec, []),
+                       riak_pipe:queue_work(Pipe, 3),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, Res, []} = riak_pipe:collect_results(Pipe),
                        [{counter,0},{counter,1},{counter,2},{counter,3}] = Res
                end}
       end,
@@ -676,10 +676,10 @@ basic_test_() ->
                                              module=riak_pipe_w_rec_countdown,
                                              arg=testeoi}],
                        Options = [{trace,[restart]},{log,sink}],
-                       {ok, Head, Sink} = riak_pipe:exec(Spec, Options),
-                       riak_pipe_vnode:queue_work(Head, 3),
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, Res, Trc} = riak_pipe:collect_results(Sink),
+                       {ok, Pipe} = riak_pipe:exec(Spec, Options),
+                       riak_pipe:queue_work(Pipe, 3),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, Res, Trc} = riak_pipe:collect_results(Pipe),
                        [{counter,0},{counter,0},{counter,0},
                         {counter,1},{counter,2},{counter,3}] = Res,
                        try
@@ -720,21 +720,21 @@ exception_test_() ->
                         X
                 end,
     Send_one_100 =
-        fun(Head, _Sink) ->
-                ok = riak_pipe_vnode:queue_work(Head, 100),
+        fun(Pipe) ->
+                ok = riak_pipe:queue_work(Pipe, 100),
                 %% Sleep so that we don't have workers being shutdown before
                 %% the above work item gets to the end of the pipe.
                 timer:sleep(100),
-                riak_pipe_fitting:eoi(Head)
+                riak_pipe:eoi(Pipe)
         end,
     Send_onehundred_100 =
-        fun(Head, _Sink) ->
-                [ok = riak_pipe_vnode:queue_work(Head, 100) ||
+        fun(Pipe) ->
+                [ok = riak_pipe:queue_work(Pipe, 100) ||
                     _ <- lists:seq(1,100)],
                 %% Sleep so that we don't have workers being shutdown before
                 %% the above work item gets to the end of the pipe.
                 timer:sleep(100),
-                riak_pipe_fitting:eoi(Head)
+                riak_pipe:eoi(Pipe)
         end,
     XFormDecrOrCrashFun = fun(Input, Partition, FittingDetails) ->
                                   ok = riak_pipe_vnode_worker:send_output(
@@ -750,12 +750,12 @@ exception_test_() ->
      teardown_runtime(),
      [fun(_) ->
               XBad1 =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
-                          ok = riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                          ok = riak_pipe_vnode:queue_work(Head, [7, 8, bummer]),
-                          ok = riak_pipe_vnode:queue_work(Head, [10, 11, 12]),
-                          riak_pipe_fitting:eoi(Head),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, [1, 2, 3]),
+                          ok = riak_pipe:queue_work(Pipe, [4, 5, 6]),
+                          ok = riak_pipe:queue_work(Pipe, [7, 8, bummer]),
+                          ok = riak_pipe:queue_work(Pipe, [10, 11, 12]),
+                          riak_pipe:eoi(Pipe),
                           ok
                   end,
               {"generic_transform(XBad1)",
@@ -771,11 +771,11 @@ exception_test_() ->
       end,
       fun(_) ->
               XBad2 =
-                  fun(Head, _Sink) ->
-                          [ok = riak_pipe_vnode:queue_work(Head, N) ||
+                  fun(Pipe) ->
+                          [ok = riak_pipe:queue_work(Pipe, N) ||
                               N <- lists:seq(0,2)],
-                          ok = riak_pipe_vnode:queue_work(Head, 500),
-                          exit({success_so_far, collect_results(_Sink, 100)})
+                          ok = riak_pipe:queue_work(Pipe, 500),
+                          exit({success_so_far, collect_results(Pipe, 100)})
                   end,
               {"generic_transform(XBad2)",
                fun() ->
@@ -790,11 +790,11 @@ exception_test_() ->
       end,
       fun(_) ->
               TailWorkerCrash =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, 100),
                           timer:sleep(100),
-                          ok = riak_pipe_vnode:queue_work(Head, 1),
-                          riak_pipe_fitting:eoi(Head),
+                          ok = riak_pipe:queue_work(Pipe, 1),
+                          riak_pipe:eoi(Pipe),
                           ok
                   end,
               {"generic_transform(TailWorkerCrash)",
@@ -808,12 +808,12 @@ exception_test_() ->
       end,
       fun(_) ->
               VnodeCrash =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, 100),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, 100),
                           timer:sleep(100),
                           kill_all_pipe_vnodes(),
                           timer:sleep(100),
-                          riak_pipe_fitting:eoi(Head),
+                          riak_pipe:eoi(Pipe),
                           ok
                   end,
               {"generic_transform(VnodeCrash)",
@@ -827,15 +827,16 @@ exception_test_() ->
       end,
       fun(_) ->
               HeadFittingCrash =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, [1, 2, 3]),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, [1, 2, 3]),
+                          [Head|_] = Pipe#pipe.fittings,
                           (catch riak_pipe_fitting:crash(Head, DieFun)),
                           {error, [worker_startup_failed]} =
-                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
+                              riak_pipe:queue_work(Pipe, [4, 5, 6]),
                           %% Again, just for fun ... still fails
                           {error, [worker_startup_failed]} =
-                              riak_pipe_vnode:queue_work(Head, [4, 5, 6]),
-                          exit({success_so_far, collect_results(_Sink, 100)})
+                              riak_pipe:queue_work(Pipe, [4, 5, 6]),
+                          exit({success_so_far, collect_results(Pipe, 100)})
                   end,
               {"generic_transform(HeadFittingCrash)",
                fun() ->
@@ -849,13 +850,11 @@ exception_test_() ->
       end,
       fun(_) ->
               MiddleFittingNormal =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          [{_, BuilderPid, _, _}] =
-                              riak_pipe_builder_sup:builder_pids(),
-                          {ok, FittingPids} =
-                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          FittingPids = [ P || #fitting{pid=P}
+                                                   <- Pipe#pipe.fittings],
 
                           %% Aside: exercise riak_pipe_fitting:workers/1.
                           %% There's a single worker on vnode 0, whee.
@@ -871,6 +870,7 @@ exception_test_() ->
                           hd(FittingPids) ! bogus_message,
 
                           %% Aside: send bogus done message
+                          [Head|_] = Pipe#pipe.fittings,
                           MyRef = Head#fitting.ref,
                           ok = gen_fsm:sync_send_event(hd(FittingPids),
                                                        {done, MyRef, asdf}),
@@ -886,8 +886,8 @@ exception_test_() ->
                           %% This message will be lost in the middle of the
                           %% pipe, but we'll be able to notice it via
                           %% extract_trace_errors/1.
-                          ok = riak_pipe_vnode:queue_work(Head, 30),
-                          exit({success_so_far, collect_results(_Sink, 100)})
+                          ok = riak_pipe:queue_work(Pipe, 30),
+                          exit({success_so_far, collect_results(Pipe, 100)})
                   end,
               {"generic_transform(MiddleFittingNormal)",
                fun() ->
@@ -902,13 +902,11 @@ exception_test_() ->
       end,
       fun(_) ->
               MiddleFittingCrash =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          [{_, BuilderPid, _, _}] =
-                              riak_pipe_builder_sup:builder_pids(),
-                          {ok, FittingPids} =
-                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          FittingPids = [ P || #fitting{pid=P}
+                                                   <- Pipe#pipe.fittings ],
                           Third = lists:nth(3, FittingPids),
                           (catch riak_pipe_fitting:crash(Third, DieFun)),
                           Fourth = lists:nth(4, FittingPids),
@@ -916,9 +914,9 @@ exception_test_() ->
                           %% try to avoid racing w/pipeline shutdown
                           timer:sleep(100),
                           {error,[worker_startup_failed]} =
-                              riak_pipe_vnode:queue_work(Head, 30),
-                          riak_pipe_fitting:eoi(Head),
-                          exit({success_so_far, collect_results(_Sink, 100)})
+                              riak_pipe:queue_work(Pipe, 30),
+                          riak_pipe:eoi(Pipe),
+                          exit({success_so_far, collect_results(Pipe, 100)})
                   end,
               {"generic_transform(MiddleFittingCrash)",
                fun() ->
@@ -937,22 +935,20 @@ exception_test_() ->
               %% trying to exercise the patch in commit cb0447f3c46
               %% but am not having much luck.  {sigh}
               TailFittingCrash =
-                  fun(Head, _Sink) ->
-                          ok = riak_pipe_vnode:queue_work(Head, 20),
+                  fun(Pipe) ->
+                          ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          [{_, BuilderPid, _, _}] =
-                              riak_pipe_builder_sup:builder_pids(),
-                          {ok, FittingPids} =
-                              riak_pipe_builder:fitting_pids(BuilderPid),
+                          FittingPids = [ P || #fitting{pid=P}
+                                                   <- Pipe#pipe.fittings ],
                           Last = lists:last(FittingPids),
                           (catch riak_pipe_fitting:crash(Last, DieFun)),
                           %% try to avoid racing w/pipeline shutdown
                           timer:sleep(100),
                           {error,[worker_startup_failed]} =
-                              riak_pipe_vnode:queue_work(Head, 30),
-                          riak_pipe_fitting:eoi(Head),
+                              riak_pipe:queue_work(Pipe, 30),
+                          riak_pipe:eoi(Pipe),
                           exit({success_so_far,
-                                collect_results(_Sink, 100)})
+                                collect_results(Pipe, 100)})
                   end,
               {"generic_transform(TailFittingCrash)",
                fun() ->
@@ -968,31 +964,31 @@ exception_test_() ->
       fun(_) ->
               {"worker init crash 1",
                fun() ->
-                       {ok, Head, Sink} =
+                       {ok, Pipe} =
                            riak_pipe:exec(
                              [#fitting_spec{name="init crash",
                                             module=riak_pipe_w_crash,
                                             arg=init_exit,
                                             chashfun=follow}], ErrLog),
                        {error, [worker_startup_failed]} =
-                           riak_pipe_vnode:queue_work(Head, x),
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, [], []} = collect_results(Sink, 500)
+                           riak_pipe:queue_work(Pipe, x),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, [], []} = collect_results(Pipe, 500)
                end}
       end,
       fun(_) ->
               {"worker init crash 2 (only init arg differs from #1 above)",
                fun() ->
-                       {ok, Head, Sink} =
+                       {ok, Pipe} =
                            riak_pipe:exec(
                              [#fitting_spec{name="init crash",
                                             module=riak_pipe_w_crash,
                                             arg=init_badreturn,
                                             chashfun=follow}], ErrLog),
                        {error, [worker_startup_failed]} =
-                           riak_pipe_vnode:queue_work(Head, x),
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, [], []} = collect_results(Sink, 500)
+                           riak_pipe:queue_work(Pipe, x),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, [], []} = collect_results(Pipe, 500)
                end}
       end,
       fun(_) ->
@@ -1022,17 +1018,17 @@ exception_test_() ->
                                               module=riak_pipe_w_xform,
                                               arg=XFormDecrOrCrashFun,
                                               chashfun=fun zero_part/1}),
-                       {ok, Head1, Sink1} =
+                       {ok, Pipe1} =
                            riak_pipe:exec(Spec, AllLog),
-                       {ok, Head2, Sink2} =
+                       {ok, Pipe2} =
                            riak_pipe:exec(Spec, AllLog),
-                       ok = riak_pipe_vnode:queue_work(Head1, 100),
+                       ok = riak_pipe:queue_work(Pipe1, 100),
                        timer:sleep(100),
                        %% At worker limit, can't even start 1st worker @ Head2
                        {error, [worker_limit_reached]} =
-                           riak_pipe_vnode:queue_work(Head2, 100),
-                       {timeout, [], Trace1} = collect_results(Sink1, 500),
-                       {timeout, [], Trace2} = collect_results(Sink2, 500),
+                           riak_pipe:queue_work(Pipe2, 100),
+                       {timeout, [], Trace1} = collect_results(Pipe1, 500),
+                       {timeout, [], Trace2} = collect_results(Pipe2, 500),
                        [_] = extract_trace_errors(Trace1), % exactly one error!
                        [] = extract_queued(Trace2)
                end}
@@ -1048,12 +1044,12 @@ exception_test_() ->
                                 #fitting_spec{name="foo",
                                               module=riak_pipe_w_xform,
                                               arg=XFormDecrOrCrashFun}),
-                       {ok, Head1, Sink1} =
+                       {ok, Pipe1} =
                            riak_pipe:exec(Spec, AllLog),
-                       [ok = riak_pipe_vnode:queue_work(Head1, X) ||
+                       [ok = riak_pipe:queue_work(Pipe1, X) ||
                            X <- lists:seq(101, 200)],
-                       riak_pipe_fitting:eoi(Head1),
-                       {eoi, Res, Trace1} = collect_results(Sink1, 500),
+                       riak_pipe:eoi(Pipe1),
+                       {eoi, Res, Trace1} = collect_results(Pipe1, 500),
                        100 = length(Res),
                        [] = extract_trace_errors(Trace1)
                end}
@@ -1085,7 +1081,7 @@ exception_test_() ->
                                              nval=2}],
                        Opts = [{log, sink},
                                {trace,[error,restart,restart_fail,queue]}],
-                       {ok, Head, Sink} = riak_pipe:exec(Spec, Opts),
+                       {ok, Pipe} = riak_pipe:exec(Spec, Opts),
 
                        Inputs1 = lists:seq(0,127),
                        Inputs2 = lists:seq(128,255),
@@ -1101,9 +1097,9 @@ exception_test_() ->
                        %% to an alternate vnode
 
                        %% send many inputs, send crash, send more inputs
-                       [riak_pipe_vnode:queue_work(Head, N) || N <- Inputs1],
-                       riak_pipe_vnode:queue_work(Head, init_restartfail),
-                       [riak_pipe_vnode:queue_work(Head, N) || N <- Inputs2],
+                       [riak_pipe:queue_work(Pipe, N) || N <- Inputs1],
+                       riak_pipe:queue_work(Pipe, init_restartfail),
+                       [riak_pipe:queue_work(Pipe, N) || N <- Inputs2],
                        %% one worker should now have both the crashing input
                        %% and a valid input following it waiting in its queue
                        %% - the test is whether or not that valid input
@@ -1114,11 +1110,11 @@ exception_test_() ->
                        %% - the test is whether the new inputs are
                        %%   redirected correctly
                        timer:sleep(2000),
-                       [riak_pipe_vnode:queue_work(Head, N) || N <- Inputs3],
+                       [riak_pipe:queue_work(Pipe, N) || N <- Inputs3],
 
                        %% flush the pipe
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, Results, Trace} = riak_pipe:collect_results(Sink),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, Results, Trace} = riak_pipe:collect_results(Pipe),
 
                        %% all results should have completed correctly
                        ?assertEqual(length(Inputs1++Inputs2++Inputs3),
@@ -1201,16 +1197,16 @@ exception_test_() ->
       fun(_) ->
               {"Vnode Death",
                fun() ->
-                       {ok, Head, Sink} =
+                       {ok, Pipe} =
                            riak_pipe:exec(
                              [#fitting_spec{name=vnode_death_test,
                                             module=riak_pipe_w_crash}],
                              []),
                        %% this should kill vnode such that it never
                        %% responds to the enqueue request
-                       riak_pipe_vnode:queue_work(Head, vnode_killer),
-                       riak_pipe_fitting:eoi(Head),
-                       {eoi, Res, []} = riak_pipe:collect_results(Sink),
+                       riak_pipe:queue_work(Pipe, vnode_killer),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, Res, []} = riak_pipe:collect_results(Pipe),
                        ?assertEqual([], Res)
                end}
       end

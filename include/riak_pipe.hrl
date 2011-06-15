@@ -25,6 +25,13 @@
           nval = 1 :: riak_pipe_vnode:nval()
         }).
 
+-record(pipe,
+        {
+          builder :: pid(),
+          fittings :: [#fitting{}],
+          sink :: #fitting{}
+        }).
+
 -record(pipe_result,
         {
           ref,

@@ -30,7 +30,7 @@
 %% API
 -export([start_link/2]).
 -export([fitting_pids/1,
-         get_first_fitting/2]).
+         get_fittings/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -78,12 +78,12 @@ fitting_pids(Builder) ->
             gone
     end.
 
-%% @doc Get the `#fitting{}' record describing the lead fitting in
+%% @doc Get the `#fitting{}' records describing the fittings in
 %%      this builder's pipeline.  This function will block until the
 %%      builder has finished building the pipeline.
--spec get_first_fitting(pid(), reference()) -> {ok, riak_pipe:fitting()}.
-get_first_fitting(BuilderPid, Ref) ->
-    gen_fsm:sync_send_event(BuilderPid, {get_first_fitting, Ref}).
+-spec get_fittings(pid(), reference()) -> {ok, riak_pipe:fitting()}.
+get_fittings(BuilderPid, Ref) ->
+    gen_fsm:sync_send_event(BuilderPid, {get_fittings, Ref}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -113,18 +113,19 @@ init([Spec, Options]) ->
 wait_pipeline_shutdown(_Event, State) ->
     {next_state, wait_pipeline_shutdown, State}.
 
-%% @doc A client is asking for the head fitting.  Respond.
--spec wait_pipeline_shutdown({get_first_fitting, reference()},
+%% @doc A client is asking for the fittings.  Respond.
+-spec wait_pipeline_shutdown({get_fittings, reference()},
                              term(), state()) ->
          {reply,
-          {ok, riak_pipe:fitting()},
+          {ok, [riak_pipe:fitting()]},
           wait_pipeline_shutdown,
           state()}.
-wait_pipeline_shutdown({get_first_fitting, Ref}, _From,
+wait_pipeline_shutdown({get_fittings, Ref}, _From,
                        #state{ref=Ref,
-                              alive=[{FirstFitting,_Ref}|_]}=State) ->
+                              alive=FittingRefs}=State) ->
     %% everything is started - reply now
-    {reply, {ok, FirstFitting}, wait_pipeline_shutdown, State};
+    Fittings = [ F || {F, _Ref} <- FittingRefs ],
+    {reply, {ok, Fittings}, wait_pipeline_shutdown, State};
 wait_pipeline_shutdown(_, _, State) ->
     %% unknown message - reply {error, unknown} to get rid of it
     {reply, {error, unknown}, wait_pipeline_shutdown, State}.

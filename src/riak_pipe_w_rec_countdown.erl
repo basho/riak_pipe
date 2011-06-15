@@ -28,10 +28,10 @@
 %%```
 %% Spec = [#fitting_spec{name=counter,
 %%                       module=riak_pipe_w_rec_countdown}],
-%% {ok, Head, Sink} = riak_pipe:exec(Spec, []),
-%% riak_pipe_vnode:queue_work(Head, 3),
-%% riak_pipe_fitting:eoi(Head),
-%% {eoi, Results, []} = riak_pipe:collect_results(Sink).
+%% {ok, Pipe} = riak_pipe:exec(Spec, []),
+%% riak_pipe:queue_work(Pipe, 3),
+%% riak_pipe:eoi(Pipe),
+%% {eoi, Results, []} = riak_pipe:collect_results(Pipe).
 %% [{counter,0},{counter,1},{counter,2},{counter,3}] = Results.
 %%'''
 %%
@@ -51,10 +51,10 @@
 %%                       module=riak_pipe_w_rec_countdown,
 %%                       arg=testeoi}],
 %% Options = [{trace,[restart]},{log,sink}],
-%% {ok, Head, Sink} = riak_pipe:exec(Spec, Options),
-%% riak_pipe_vnode:queue_work(Head, 3),
-%% riak_pipe_fitting:eoi(Head),
-%% {eoi, Results, Trace} = riak_pipe:collect_results(Sink).
+%% {ok, Pipe} = riak_pipe:exec(Spec, Options),
+%% riak_pipe:queue_work(Pipe, 3),
+%% riak_pipe:eoi(Pipe),
+%% {eoi, Results, Trace} = riak_pipe:collect_results(Pipe).
 %% [{counter,0},{counter,0},{counter,0},
 %%  {counter,1},{counter,2},{counter,3}] = Results.
 %% [{counter,{trace,[restart],{vnode,{restart,_}}}}] = Trace.

@@ -273,7 +273,7 @@ send_output(Output, FromPartition,
             Timeout, UsedPreflist) ->
     case FittingOverride#fitting.chashfun of
         sink ->
-            riak_pipe:result(Name, FittingOverride, Output),
+            riak_pipe_sink:result(Name, FittingOverride, Output),
             ok;
         follow ->
             %% TODO: should 'follow' use the original preflist (in

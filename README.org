@@ -76,8 +76,8 @@ the partition choice function for distributing that fitting's inputs.
 starting these fitting processes.  It begins by starting a "builder"
 process, which then starts and monitors each of the fitting processes,
 starting with the final one (so that its =pid= can be passed to its
-predecessor).  When all of the fitting processes have started, the
-=pid= of the first is returned to the client.
+predecessor).  When all of the fitting processes have started, a
+structure capturing their details is return to the client.
 
 ** Send inputs
 
@@ -226,30 +226,31 @@ the pipeline as a whole.  Currently supported options are:
             left undefined, all trace messages are ignored silently.
 
 The =riak_pipe:exec/2= function will return a tuple of the form ={ok,
-Head, Sink}=, =Head= being the tag you'll use to send inputs into the
-start of the pipeline, and =Sink= being details about where output is
-sent.
+Pipe}=, =Pipe= being a handle to the pipeline that was created (in the
+form of a =pipe= record, as defined in =include/riak_pipe.hrl=), which
+you will use to send inputs, to indicate the end of inputs, and to
+receive outputs later.
 
 *** Sending inputs
 
-Once you have the first fitting, you can send inputs to it using
-=riak_pipe_vnode:queue_work/2=:
+Once you have the pipe handle, you can send inputs to it using
+=riak_pipe:queue_work/2=:
 
 #+BEGIN_SRC erlang
-riak_pipe_vnode:queue_work(Head, "please process this list").
+riak_pipe:queue_work(Pipe, "please process this list").
 #+END_SRC
 
-The =queue_work/2= function evaluates the =chashfun= function (from the
-fitting's specification) against =Input=, and then sends =Input= to
-the vnode owning the range in which the hash falls.
+The =queue_work/2= function evaluates the =chashfun= function (from
+the first fitting's specification) against =Input=, and then sends
+=Input= to the vnode owning the range in which the hash falls.
 
 *** Sending eoi
 
-When you have sent all the inputs you want to the pipeline, tell the
-head fitting that you're done with =riak_pipe_fitting:eoi/1=:
+When you have sent all the inputs you want to the pipeline, tell it
+that you're done with =riak_pipe:eoi/1=:
 
 #+BEGIN_SRC erlang
-riak_pipe_fitting:eoi(Head)
+riak_pipe:eoi(Pipe)
 #+END_SRC
 
 This allows the fitting to begin shutting down its workers.  When all
@@ -293,21 +294,21 @@ If you'd rather receive the entire result set at once, instead of
 streamed, you can use the =riak_pipe:collect_results/1= function:
 
 #+BEGIN_SRC erlang
-{ok, Results, LogMessages} = riak_pipe:collect_results(Sink).
+{ok, Results, LogMessages} = riak_pipe:collect_results(Pipe).
 #+END_SRC
 
 The =receive_result/1= function is also exported from =riak_pipe= to
 make it easy to wait for the next piece of output:
 
 #+BEGIN_SRC erlang
-consume(Fitting) ->
-   case riak_pipe:receive_result(Fitting) of
+consume(Pipe) ->
+   case riak_pipe:receive_result(Pipe) of
       {result, {From, Result}} ->
          io:format("Received ~p from ~p!~n", [Result, From]),
-         consume(Fitting);
+         consume(Pipe);
       {log, {From, Msg}} ->
          io:format("Logged ~p from ~p!~n", [Msg, From]),
-         consume(Fitting);
+         consume(Pipe);
       eoi ->
          io:format("Done!~n")
    end.
