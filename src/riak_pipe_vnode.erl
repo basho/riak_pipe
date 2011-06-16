@@ -704,6 +704,8 @@ new_fwd_worker(FittingDetails,
     {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                   Sup, ForwardDetails),
     erlang:link(Pid),
+    Start = now(),
+    Perf = #worker_perf{started=Start, last_time=Start},
     ?T(FittingDetails, [fwd_worker], {vnode, {start, P}}),
     {ok, #worker{pid=Pid,
                  fitting=ForwardDetails#fitting_details.fitting,
@@ -712,7 +714,8 @@ new_fwd_worker(FittingDetails,
                  inputs_done=false,
                  q=queue:new(),
                  q_limit=WQL,
-                 blocking=queue:new()}}.
+                 blocking=queue:new(),
+                 perf=Perf}}.
 
 %% @doc Add an input to the worker's queue.  If the worker is
 %%      `waiting', send the input to it, skipping the queue.  If the
@@ -942,11 +945,12 @@ restart_worker(#worker{details=FD}=Worker,
             CopiedWorker = NewWorker#worker{
                              q=Worker#worker.q,
                              blocking=Worker#worker.blocking,
-                             inputs_done=Worker#worker.inputs_done},
+                             inputs_done=Worker#worker.inputs_done,
+                             perf=Worker#worker.perf},
             replace_worker(CopiedWorker, CleanState);
         _Error ->
             ?T(Worker#worker.details, [restart_fail],
-               {vnode, {restart_fail, Partition}}),
+               {vnode, {restart_fail, Partition, proplist_perf(Worker)}}),
             %% fail blockers, so they resubmit elsewhere
             [ reply_to_blocker(Blocker, {error, worker_restart_fail})
               || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],

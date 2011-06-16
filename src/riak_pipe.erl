@@ -541,7 +541,7 @@ extract_unblocking(Trace) ->
 
 extract_restart_fail(Trace) ->
     [Partition ||
-        {_, {trace, _, {vnode, {restart_fail, Partition}}}} <- Trace].
+        {_, {trace, _, {vnode, {restart_fail, Partition, _}}}} <- Trace].
 
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
