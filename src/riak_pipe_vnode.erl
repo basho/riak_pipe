@@ -76,6 +76,7 @@
 
 -record(worker_perf, {started :: now(),
                        processed = 0 :: non_neg_integer(),
+                       failures = 0 :: non_neg_integer(),
                        work_time = 0 :: non_neg_integer(),
                        idle_time = 0 :: non_neg_integer(),
                        last_time :: now()}).
@@ -934,9 +935,10 @@ remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
 %%      and the requests in its block queue are sent `{error, fail}'
 %%      responses.
 -spec restart_worker(#worker{}, state()) -> state().
-restart_worker(#worker{details=FD}=Worker,
+restart_worker(#worker{details=FD}=UnstatWorker,
                #state{partition=Partition}=State)
   when FD#fitting_details.module /= ?FORWARD_WORKER_MODULE ->
+    Worker = inc_fail_perf(roll_perf(UnstatWorker)),
     CleanState = remove_worker(Worker, State),
     case new_worker(Worker#worker.fitting, CleanState) of
         {ok, NewWorker} ->
@@ -1056,6 +1058,13 @@ roll_perf(#worker{perf=Perf, state=State}=Worker) ->
                           idle_time=Perf#worker_perf.idle_time+Duration}
                 end,
     Worker#worker{perf=TimedPerf#worker_perf{last_time=Now}}.
+
+%% @doc Increment the failure counter in this worker's performance
+%%      statistics.
+-spec inc_fail_perf(#worker{}) -> #worker{}.
+inc_fail_perf(#worker{perf=Perf}=Worker) ->
+    FailPerf = Perf#worker_perf{failures=1+Perf#worker_perf.failures},
+    Worker#worker{perf=FailPerf}.
     
 %% @doc Convert the worker's performance statistics to a proplist, for
 %%      sharing.
