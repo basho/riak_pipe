@@ -81,7 +81,7 @@ fitting_pids(Builder) ->
 %% @doc Get the `#fitting{}' records describing the fittings in
 %%      this builder's pipeline.  This function will block until the
 %%      builder has finished building the pipeline.
--spec get_fittings(pid(), reference()) -> {ok, riak_pipe:fitting()}.
+-spec get_fittings(pid(), reference()) -> {ok, [riak_pipe:fitting()]}.
 get_fittings(BuilderPid, Ref) ->
     gen_fsm:sync_send_event(BuilderPid, {get_fittings, Ref}).
 
