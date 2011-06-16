@@ -59,7 +59,8 @@
          collect_results/2,
          queue_work/2,
          queue_work/3,
-         eoi/1
+         eoi/1,
+         status/1
         ]).
 %% examples
 -export([example/0,
@@ -93,6 +94,7 @@
 -type exec_option() :: {sink, fitting()}
                      | {trace, all | list() | set()}
                      | {log, sink | sasl}.
+-type stat() :: {atom(), term()}.
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
@@ -347,6 +349,34 @@ collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
             %% but it's useful to have logging output in time order
             {End, ResultAcc, lists:reverse(LogAcc)}
     end.
+
+%% @doc 
+-spec status(pipe())
+         -> [{FittingName::term(),[PartitionStatus::[stat()]]}].
+status(#pipe{fittings=Fittings}) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    [ fitting_status(F, Ring) || F <- Fittings ].
+
+fitting_status(#fitting{pid=Pid}=Fitting, Ring) ->
+    case riak_pipe_fitting:workers(Pid) of
+        {ok, Workers} ->
+            {Pid,
+             [ worker_status(Fitting, Partition,
+                             riak_core_ring:index_owner(Ring, Partition))
+               || Partition <- Workers ]};
+        gone ->
+            {undefined, []}
+    end.
+
+worker_status(#fitting{pid=Pid}, Partition, Node) ->
+    {ok, Vnode} = rpc:call(Node, riak_core_vnode_master, get_vnode_pid,
+                           [Partition, riak_pipe_vnode]),
+    {Partition, Workers} = riak_pipe_vnode:status(Vnode),
+    Worker = hd([ W || W <- Workers,
+                       {fitting, Pid} == lists:keyfind(fitting, 1, W) ]),
+    [{node, Node},
+     {partition, Partition}
+     |Worker].
 
 %% @doc An example run of a simple pipe.  Uses {@link example_start/0},
 %%      {@link example_send/0}, and {@link example_receive/0} to send
