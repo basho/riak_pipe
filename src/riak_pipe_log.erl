@@ -41,7 +41,7 @@ log(#fitting_details{options=O, name=N}, Msg) ->
             ok; %% no logging
         sink ->
             Sink = proplists:get_value(sink, O),
-            riak_pipe:log(N, Sink, Msg);
+            riak_pipe_sink:log(N, Sink, Msg);
         sasl ->
             error_logger:info_msg(
               "Pipe log -- ~s:~n~P",
