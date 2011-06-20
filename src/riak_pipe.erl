@@ -60,7 +60,8 @@
          queue_work/2,
          queue_work/3,
          eoi/1,
-         status/1
+         status/1,
+         active_pipelines/1
         ]).
 %% examples
 -export([example/0,
@@ -348,6 +349,26 @@ collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
             %% result order shouldn't matter,
             %% but it's useful to have logging output in time order
             {End, ResultAcc, lists:reverse(LogAcc)}
+    end.
+
+%% @doc Get all active pipelines hosted on `Node'.  Pass the atom
+%%      `global' instead of a node name to get all pipelines hosted on
+%%      all nodes.
+%%
+%%      The return value for a Node is a list of `#pipe{}' records.
+%%      When `global' is used, the return value is a list of `{Node,
+%%      [#pipe{}]}' tuples.
+-spec active_pipelines(node() | global) ->
+         [#pipe{}] | error | [{node(), [#pipe{}] | error}].
+active_pipelines(global) ->
+    [ {Node, active_pipelines(Node)}
+      || Node <- riak_core_node_watcher:nodes(riak_pipe) ];
+active_pipelines(Node) when is_atom(Node) ->
+    case rpc:call(Node, riak_pipe_builder_sup, pipelines, []) of
+        {badrpc, _}=Reason ->
+            {error, Reason};
+        Pipes ->
+            Pipes
     end.
 
 %% @doc 
