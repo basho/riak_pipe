@@ -375,29 +375,95 @@ active_pipelines(Node) when is_atom(Node) ->
 -spec status(pipe())
          -> [{FittingName::term(),[PartitionStatus::[stat()]]}].
 status(#pipe{fittings=Fittings}) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    [ fitting_status(F, Ring) || F <- Fittings ].
+    %% get all fittings and their lists of workers
+    FittingWorkers = [ fitting_workers(F) || F <- Fittings ],
 
-fitting_status(#fitting{pid=Pid}=Fitting, Ring) ->
+    %% convert to a mapping of workers -> fittings they're performing
+    %% this allows us to make one status call per vnode,
+    %% instead of one per vnode per fitting
+    WorkerFittings = invert_dict(fun(_K, V) -> V end,
+                                 fun(K, _V) -> K end,
+                                 dict:from_list(FittingWorkers)),
+    
+    %% grab all worker-fitting statuses at once
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    WorkerStatuses = dict:map(worker_status(Ring), WorkerFittings),
+
+    %% regroup statuses by fittings
+    FittingStatus = invert_dict(fun(_K, V) ->
+                                        {fitting, Pid} =
+                                            lists:keyfind(fitting, 1, V),
+                                        Pid
+                                end,
+                                fun(_K, V) -> V end,
+                                WorkerStatuses),
+    dict:to_list(FittingStatus).
+
+%% @doc Given a dict mapping keys to lists of values, "invert" the
+%%      dict to map the values to their keys.
+%%
+%%      That is, for each `{K, [V]}' in `Dict', append `{KeyFun(K,V),
+%%      ValFun(K,V)} to dict.
+%%
+%%      For example:
+%% ```
+%% D0 = dict:from_list([{a, [1, 2, 3]}, {b, [2, 3, 4]}]),
+%% D1 = invert_dict(fun(_K, V) -> V end,
+%%                  fun(K, _V) -> K end,
+%%                  D0),
+%% [{1, [a]}, {2, [a, b]}, {3, [a, b]}, {4, [b]}] = dict:to_list(D1).
+%% '''
+-spec invert_dict(fun((term(), term()) -> term()),
+                  fun((term(), term()) -> term()),
+                  dict()) -> dict().
+invert_dict(KeyFun, ValFun, Dict) ->
+    dict:fold(
+      fun(Key, Vals, DAcc) ->
+              lists:foldl(fun(V, LAcc) ->
+                                  dict:append(KeyFun(Key, V),
+                                              ValFun(Key, V),
+                                              LAcc)
+                          end,
+                          DAcc,
+                          Vals)
+      end,
+      dict:new(),
+      Dict).
+
+%% @doc Get the list of vnodes working for a fitting.
+-spec fitting_workers(#fitting{})
+         -> {#fitting{}, [riak_pipe_vnode:partition()]}.
+fitting_workers(#fitting{pid=Pid}=Fitting) ->
     case riak_pipe_fitting:workers(Pid) of
         {ok, Workers} ->
-            {Pid,
-             [ worker_status(Fitting, Partition,
-                             riak_core_ring:index_owner(Ring, Partition))
-               || Partition <- Workers ]};
+            {Fitting, Workers};
         gone ->
-            {undefined, []}
+            {Fitting, []}
     end.
 
-worker_status(#fitting{pid=Pid}, Partition, Node) ->
-    {ok, Vnode} = rpc:call(Node, riak_core_vnode_master, get_vnode_pid,
-                           [Partition, riak_pipe_vnode]),
-    {Partition, Workers} = riak_pipe_vnode:status(Vnode),
-    Worker = hd([ W || W <- Workers,
-                       {fitting, Pid} == lists:keyfind(fitting, 1, W) ]),
-    [{node, Node},
-     {partition, Partition}
-     |Worker].
+%% @doc Produce a function that can be handed a partition number and a
+%%      list of fittings, and will return the status for those
+%%      fittings on that partition.  The closure over the Ring is a
+%%      way to map over a list without having to fetch the ring
+%%      repeatedly.
+-spec worker_status(riak_core_ring:ring())
+         -> fun( (riak_pipe_vnode:partition(), [#fitting{}])
+                 -> [ [{atom(), term()}] ] ).
+worker_status(Ring) ->
+    fun(Partition, Fittings) ->
+            %% lookup vnode pid
+            Node = riak_core_ring:index_owner(Ring, Partition),
+            {ok, Vnode} = rpc:call(Node,
+                                   riak_core_vnode_master, get_vnode_pid,
+                                   [Partition, riak_pipe_vnode]),
+            
+            %% get status of each worker
+            {Partition, Workers} = riak_pipe_vnode:status(Vnode, Fittings),
+
+            %% add 'node' and 'partition' to status
+            [ [{node, Node}, {partition, Partition} | W]
+              || W <- Workers ]
+    end.
 
 %% @doc An example run of a simple pipe.  Uses {@link example_start/0},
 %%      {@link example_send/0}, and {@link example_receive/0} to send

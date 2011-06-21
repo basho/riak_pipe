@@ -44,7 +44,8 @@
          eoi/2,
          next_input/2,
          reply_archive/3,
-         status/1]).
+         status/1,
+         status/2]).
 -export([hash_for_partition/1]).
 
 -include_lib("riak_core/include/riak_core_vnode.hrl"). %% ?FOLD_REQ
@@ -118,7 +119,8 @@
 -record(cmd_next_input, {fitting :: #fitting{}}).
 -record(cmd_archive, {fitting :: #fitting{},
                       archive :: term()}).
--record(cmd_status, {sender :: term()}).
+-record(cmd_status, {sender :: term(),
+                     fittings :: all | [#fitting{}]}).
 
 %% API
 
@@ -389,11 +391,20 @@ reply_archive(Pid, Fitting, Archive) ->
 %%</dd></dl>
 -spec status(pid()) -> {partition(), [[{atom(), term()}]]}.
 status(Pid) ->
+    status(Pid, all).
+
+%% @doc Produces the same type of data as {@link status/1}, but only
+%%      includes information for the fittings given.
+-spec status(pid(), [#fitting{}] | all)
+         -> {partition(), [[{atom(), term()}]]}.
+status(Pid, Fittings) when is_list(Fittings); Fittings =:= all ->
     Ref = make_ref(),
-    riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()}}),
+    riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()},
+                                                  fittings=Fittings}),
     receive
         {Ref, Reply} -> Reply
     end.
+    
 
 %% @doc Handle a vnode command.
 -spec handle_command(term(), sender(), state()) ->
@@ -1014,9 +1025,17 @@ send_done(Fitting) ->
 %% @doc Handle a request for status.  Generate the worker detail
 %%      list, and send it to the requester.
 -spec status_internal(#cmd_status{}, state()) -> {noreply, state()}.
-status_internal(#cmd_status{sender=Sender},
+status_internal(#cmd_status{sender=Sender, fittings=Fittings},
                 #state{partition=P, workers=Workers}=State) ->
-    Reply = {P, [ worker_detail(W) || W <- Workers ]},
+    FilteredWorkers =
+        case Fittings of
+            all ->
+                Workers;
+            _ ->
+                [ W || W <- Workers,
+                       lists:member(W#worker.fitting, Fittings)]
+        end,
+    Reply = {P, [ worker_detail(W) || W <- FilteredWorkers]},
     %% riak_core_vnode:command(Pid) does not set reply properly
     riak_core_vnode:reply(Sender, Reply),
     {noreply, State}.
