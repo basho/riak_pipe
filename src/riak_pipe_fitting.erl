@@ -185,13 +185,13 @@ wait_upstream_eoi({eoi, Ref},
         %% to fake spinning up a single worker and have it send its
         %% result downstream (which is done as a side-effect of
         %% calling wait_for_input()).
-        true = (Details#fitting_details.module):no_input_run_reduce_once(),
-        FakePartition = 0,
-        {ok, _WStateName1, WState1, 0} =
-            riak_pipe_vnode_worker:init([FakePartition, fake_pid, Details]),
-        {stop, normal, _WState2} =
-            riak_pipe_vnode_worker:wait_for_input({input, done}, WState1)
-    catch error:undef ->
+        #fitting_details{module=Module, options=Os0} = Details,
+        true = Module:no_input_run_reduce_once(),
+        Os = [pipe_fitting_no_input|Os0],
+        {ok, WState1} = Module:init(0, Details#fitting_details{options=Os}),
+        _ = Module:done(WState1)
+    catch
+        error:_ ->                              % undef or badmatch
             ok
     end,
     forward_eoi(State),
