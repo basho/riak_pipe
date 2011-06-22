@@ -179,7 +179,21 @@ init([Builder,
 wait_upstream_eoi({eoi, Ref},
                   #state{ref=Ref, workers=[], details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
-    %% no workers to stop
+    %% No workers to stop
+    try
+        %% To assist some fittings, such as riak_kv_w_reduce, we need
+        %% to fake spinning up a single worker and have it send its
+        %% result downstream (which is done as a side-effect of
+        %% calling wait_for_input()).
+        #fitting_details{module=Module, options=Os0} = Details,
+        true = Module:no_input_run_reduce_once(),
+        Os = [pipe_fitting_no_input|Os0],
+        {ok, WState1} = Module:init(0, Details#fitting_details{options=Os}),
+        _ = Module:done(WState1)
+    catch
+        error:_ ->                              % undef or badmatch
+            ok
+    end,
     forward_eoi(State),
     {stop, normal, State};
 wait_upstream_eoi({eoi, Ref},
