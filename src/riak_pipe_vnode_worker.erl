@@ -70,7 +70,7 @@
 %%      needs to clean up, and send any outputs it still needs to
 %%      send.  When `done/1' returns, the worker will terminate.
 %%
-%%      There are also three optional functions that a worker behavior
+%%      There are also four optional functions that a worker behavior
 %%      module can export:
 %%
 %% ```
@@ -106,6 +106,25 @@
 %%      the `Archive' with its `ModuleState' (in whatever sense
 %%      "merge" may mean for this fitting), and return the resulting
 %%      `NewModuleState'.
+%%
+%% ```
+%% no_input_run_reduce_once() -> boolean().
+%% '''
+%%
+%% If present and returns `true', then in the case that a fitting has
+%% no input (as measured by having zero workers), then a "fake" worker
+%% will be started for the express purpose of running its computation
+%% once and sending some output downstream.  Right now, the only
+%% fitting that needs this feature is riak_kv_w_reduce.erl, which
+%% needs the capability to run its reduce function once (with input of
+%% an empty list) in order to maintain full compatibility with Riak
+%% KV's Map/Reduce.
+%%
+%% For riak_kv_w_reduce.erl and any other pipe behavior callback
+%% module where this function returns `true', the
+%% `#fitting_details.options' property list will contain the property
+%% `pipe_fitting_no_input' to indicate that the fitting has no input.
+%%
 -module(riak_pipe_vnode_worker).
 
 -behaviour(gen_fsm).
