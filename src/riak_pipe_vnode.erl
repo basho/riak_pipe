@@ -395,6 +395,11 @@ reply_archive(Pid, Fitting, Archive) ->
 %%</dt><dd>
 %%      Integer number of inputs that the worker has processed.
 %%</dd><dt>
+%%      `failures'
+%%</dt><dd>
+%%      Integer number of times that the worker has failed (and was
+%%      restarted).
+%%</dd><dt>
 %%      `work_time'
 %%</dt><dd>
 %%      Total time the worker has spent processing inputs (as opposed
@@ -1115,6 +1120,7 @@ proplist_perf(#worker{perf=Perf, state=State}) ->
                          end,
     [{started, Perf#worker_perf.started},
      {processed, Perf#worker_perf.processed},
+     {failures, Perf#worker_perf.failures},
      {work_time, Perf#worker_perf.work_time + AddWork},
      {idle_time, Perf#worker_perf.idle_time + AddIdle}].
 
