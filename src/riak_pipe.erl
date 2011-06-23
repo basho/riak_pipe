@@ -371,7 +371,17 @@ active_pipelines(Node) when is_atom(Node) ->
             Pipes
     end.
 
-%% @doc 
+%% @doc Retrieve details about the status of the workers in this
+%%      pipeline.  The form of the return is a list with one entry per
+%%      fitting in the pipe.  Each fitting's entry is a 2-tuple of the
+%%      form `{FittingName, WorkerDetails}', where `FittingName' is
+%%      the name that was given to the fitting in the call to {@link
+%%      riak_pipe:exec/2}, and `WorkerDetails' is a list with one
+%%      entry per worker.  Each worker entry is a proplist, of the
+%%      form returned by {@link riak_pipe_vnode:status/1}, with two
+%%      properties added: `node', the node on which the worker is
+%%      running, and `partition', the index of the vnode that the
+%%      worker belongs to.
 -spec status(pipe())
          -> [{FittingName::term(),[PartitionStatus::[stat()]]}].
 status(#pipe{fittings=Fittings}) ->

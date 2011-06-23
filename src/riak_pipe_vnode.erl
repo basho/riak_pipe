@@ -385,6 +385,28 @@ reply_archive(Pid, Fitting, Archive) ->
 %%      `blocking_length'
 %%</dt><dd>
 %%      Integer number of requests blocking on the queue.
+%%</dd><dt>
+%%      `started'
+%%</dt><dd>
+%%      An {@link erlang:now/0} tuple, indicating the time that the
+%%      worker started.
+%%</dd><dt>
+%%      `processed'
+%%</dt><dd>
+%%      Integer number of inputs that the worker has processed.
+%%</dd><dt>
+%%      `work_time'
+%%</dt><dd>
+%%      Total time the worker has spent processing inputs (as opposed
+%%      to waiting, idle for them).  Given as an integer number of
+%%      microseconds.
+%%</dd><dt>
+%%      `idle_time'
+%%</dt><dd>
+%%      Total time the worker has spent waiting for inputs (as opposed
+%%      to working on them).  Given as an integer number of
+%%      microseconds.  Should be roughly equal to
+%%      `(now()-started)-work_time'.
 %%</dd></dl>
 -spec status(pid()) -> {partition(), [[{atom(), term()}]]}.
 status(Pid) ->
