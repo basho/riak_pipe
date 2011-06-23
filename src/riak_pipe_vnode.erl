@@ -67,20 +67,17 @@
                 | timeout
                 | forwarding
                 | preflist_exhausted.
--type now() :: {non_neg_integer(),
-                non_neg_integer(),
-                non_neg_integer()}.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
--record(worker_perf, {started :: now(),
+-record(worker_perf, {started :: calendar:t_now(),
                        processed = 0 :: non_neg_integer(),
                        failures = 0 :: non_neg_integer(),
                        work_time = 0 :: non_neg_integer(),
                        idle_time = 0 :: non_neg_integer(),
-                       last_time :: now()}).
+                       last_time :: calendar:t_now()}).
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
                  details :: #fitting_details{},
