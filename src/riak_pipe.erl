@@ -245,7 +245,7 @@ correct_trace(Options) ->
 
 %% @doc Send an end-of-inputs message to the head of the pipe.
 -spec eoi(Pipe::pipe()) -> ok.
-eoi(#pipe{fittings=[Head|_]}) ->
+eoi(#pipe{fittings=[{_,Head}|_]}) ->
     riak_pipe_fitting:eoi(Head).
 
 %% @equiv queue_work(Pipe, Input, infinity)
@@ -260,7 +260,7 @@ queue_work(Pipe, Input) ->
                  Input::term(),
                  Timeout::riak_pipe_vnode:qtimeout())
          -> ok | {error, riak_pipe_vnode:qerror()}.
-queue_work(#pipe{fittings=[Head|_]}, Input, Timeout)
+queue_work(#pipe{fittings=[{_,Head}|_]}, Input, Timeout)
   when Timeout =:= infinity; Timeout =:= noblock ->
     riak_pipe_vnode:queue_work(Head, Input, Timeout).
 
@@ -386,7 +386,7 @@ active_pipelines(Node) when is_atom(Node) ->
          -> [{FittingName::term(),[PartitionStatus::[stat()]]}].
 status(#pipe{fittings=Fittings}) ->
     %% get all fittings and their lists of workers
-    FittingWorkers = [ fitting_workers(F) || F <- Fittings ],
+    FittingWorkers = [ fitting_workers(F) || {_, F} <- Fittings ],
 
     %% convert to a mapping of workers -> fittings they're performing
     %% this allows us to make one status call per vnode,
@@ -400,10 +400,13 @@ status(#pipe{fittings=Fittings}) ->
     WorkerStatuses = dict:map(worker_status(Ring), WorkerFittings),
 
     %% regroup statuses by fittings
+    PidNames = [ {Name, Pid} || {Name, #fitting{pid=Pid}} <- Fittings ],
     FittingStatus = invert_dict(fun(_K, V) ->
                                         {fitting, Pid} =
                                             lists:keyfind(fitting, 1, V),
-                                        Pid
+                                        {Name, Pid} =
+                                            lists:keyfind(Pid, 2, PidNames),
+                                        Name
                                 end,
                                 fun(_K, V) -> V end,
                                 WorkerStatuses),
@@ -956,7 +959,7 @@ exception_test_() ->
               HeadFittingCrash =
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, [1, 2, 3]),
-                          [Head|_] = Pipe#pipe.fittings,
+                          [{_, Head}|_] = Pipe#pipe.fittings,
                           (catch riak_pipe_fitting:crash(Head, DieFun)),
                           {error, [worker_startup_failed]} =
                               riak_pipe:queue_work(Pipe, [4, 5, 6]),
@@ -980,7 +983,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings],
 
                           %% Aside: exercise riak_pipe_fitting:workers/1.
@@ -997,7 +1000,7 @@ exception_test_() ->
                           hd(FittingPids) ! bogus_message,
 
                           %% Aside: send bogus done message
-                          [Head|_] = Pipe#pipe.fittings,
+                          [{_, Head}|_] = Pipe#pipe.fittings,
                           MyRef = Head#fitting.ref,
                           ok = gen_fsm:sync_send_event(hd(FittingPids),
                                                        {done, MyRef, asdf}),
@@ -1032,7 +1035,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings ],
                           Third = lists:nth(3, FittingPids),
                           (catch riak_pipe_fitting:crash(Third, DieFun)),
@@ -1065,7 +1068,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings ],
                           Last = lists:last(FittingPids),
                           (catch riak_pipe_fitting:crash(Last, DieFun)),

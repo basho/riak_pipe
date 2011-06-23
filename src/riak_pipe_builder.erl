@@ -95,8 +95,11 @@ pipeline(BuilderPid) ->
 init([Spec, Options]) ->
     {sink, #fitting{ref=Ref}=Sink} = lists:keyfind(sink, 1, Options),
     Fittings = start_fittings(Spec, Options),
+    NamedFittings = lists:zip(
+                      [ N || #fitting_spec{name=N} <- Spec ],
+                      [ F || {F, _R} <- Fittings ]),
     Pipe = #pipe{builder=self(),
-                 fittings=[ F || {F, _R} <- Fittings ],
+                 fittings=NamedFittings,
                  sink=Sink},
     put(eunit, [{module, ?MODULE},
                 {ref, Ref},
