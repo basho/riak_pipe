@@ -30,7 +30,7 @@
 %% API
 -export([start_link/2]).
 -export([fitting_pids/1,
-         get_fittings/2]).
+         pipeline/1]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -46,7 +46,7 @@
 -include("riak_pipe_debug.hrl").
 
 -record(state, {options :: riak_pipe:exec_opts(),
-                ref :: reference(),
+                pipe :: #pipe{},
                 alive :: [{#fitting{}, reference()}]}). % monitor ref
 
 -opaque state() :: #state{}.
@@ -78,12 +78,12 @@ fitting_pids(Builder) ->
             gone
     end.
 
-%% @doc Get the `#fitting{}' records describing the fittings in
-%%      this builder's pipeline.  This function will block until the
-%%      builder has finished building the pipeline.
--spec get_fittings(pid(), reference()) -> {ok, [riak_pipe:fitting()]}.
-get_fittings(BuilderPid, Ref) ->
-    gen_fsm:sync_send_event(BuilderPid, {get_fittings, Ref}).
+%% @doc Get the `#pipe{}' record describing the pipeline created by
+%%      this builder.  This function will block until the builder has
+%%      finished building the pipeline.
+-spec pipeline(pid()) -> {ok, #pipe{}} | gone.
+pipeline(BuilderPid) ->
+    gen_fsm:sync_send_event(BuilderPid, pipeline).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -93,8 +93,14 @@ get_fittings(BuilderPid, Ref) ->
 -spec init([ [riak_pipe:fitting_spec()] | riak_pipe:exec_opts() ]) ->
          {ok, wait_pipeline_shutdown, state()}.
 init([Spec, Options]) ->
-    {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
+    {sink, #fitting{ref=Ref}=Sink} = lists:keyfind(sink, 1, Options),
     Fittings = start_fittings(Spec, Options),
+    NamedFittings = lists:zip(
+                      [ N || #fitting_spec{name=N} <- Spec ],
+                      [ F || {F, _R} <- Fittings ]),
+    Pipe = #pipe{builder=self(),
+                 fittings=NamedFittings,
+                 sink=Sink},
     put(eunit, [{module, ?MODULE},
                 {ref, Ref},
                 {spec, Spec},
@@ -102,7 +108,7 @@ init([Spec, Options]) ->
                 {fittings, Fittings}]),
     {ok, wait_pipeline_shutdown,
      #state{options=Options,
-            ref=Ref,
+            pipe=Pipe,
             alive=Fittings}}.
 
 %% @doc All fittings have been started, and the builder is just
@@ -114,18 +120,14 @@ wait_pipeline_shutdown(_Event, State) ->
     {next_state, wait_pipeline_shutdown, State}.
 
 %% @doc A client is asking for the fittings.  Respond.
--spec wait_pipeline_shutdown({get_fittings, reference()},
-                             term(), state()) ->
+-spec wait_pipeline_shutdown(pipeline, term(), state()) ->
          {reply,
-          {ok, [riak_pipe:fitting()]},
+          {ok, #pipe{}},
           wait_pipeline_shutdown,
           state()}.
-wait_pipeline_shutdown({get_fittings, Ref}, _From,
-                       #state{ref=Ref,
-                              alive=FittingRefs}=State) ->
+wait_pipeline_shutdown(pipeline, _From, #state{pipe=Pipe}=State) ->
     %% everything is started - reply now
-    Fittings = [ F || {F, _Ref} <- FittingRefs ],
-    {reply, {ok, Fittings}, wait_pipeline_shutdown, State};
+    {reply, {ok, Pipe}, wait_pipeline_shutdown, State};
 wait_pipeline_shutdown(_, _, State) ->
     %% unknown message - reply {error, unknown} to get rid of it
     {reply, {error, unknown}, wait_pipeline_shutdown, State}.

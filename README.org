@@ -341,6 +341,56 @@ See the [[Receiving outputs]] section above for details about using the
 =riak_pipe= instead of pulling these records out of a mailbox
 explicitly.
 
+*** Inspecting Performance
+
+While a pipeline is running, some information about what its workers
+are up to can be fetched using =riak_pipe:status/1=.  For example:
+
+#+BEGIN_SRC
+{ok, Pipe} = riak_pipe:example_start().
+ok = riak_pipe:queue_work(Pipe, "foo").
+Status = riak_pipe:status(Pipe).
+#+END_SRC
+
+The code above starts a pipeline with one fitting named =empty_pass=,
+sends it one input, and then requests its status.  The =Status=
+received on the last line, will be something like the following:
+
+#+BEGIN_SRC
+[{empty_pass,[[{node,'riak@127.0.0.1'},
+               {partition,22835963083295358096932575511191922182123945984},
+               {fitting,<0.469.0>},
+               {name,empty_pass},
+               {module,riak_pipe_w_pass},
+               {state,waiting},
+               {inputs_done,false},
+               {queue_length,0},
+               {blocking_length,0},
+               {started,{1308,854463,966730}},
+               {processed,1},
+               {failures,0},
+               {work_time,52},
+               {idle_time,10054032}]]}]
+#+END_SRC
+
+That is, =Status= is a list with one entry per fitting.  The example
+pipeline had only one fitting, so this list has only one entry.
+
+Each fitting's entry is a 2-tuple of the form ={Name, WorkerList}=.
+The =Name= is the name provided to =riak_pipe:exec/2=, or =empty_pass=
+in our example case.  =WorkerList= is a list containing the status of
+each worker.
+
+The status of each worker is represented as a proplist of details.
+Since the example sent only one input, and it was processed
+successfully, only one worker exists in this example list.  The details
+indicate which node the worker is running on, and which partition
+(vnode) it's working for.  The also indicate that there's nothing more
+waiting in the worker's queue, that one inputs was processed, and that
+it took 52 microseconds to process that input.  Details about the
+other fields in this proplist can be found in the documentation of
+=riak_pipe_vnode:status/1=.
+
 ** Behavior
 
 Fitting behaviors have it easy.  They need only expose three

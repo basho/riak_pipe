@@ -59,7 +59,9 @@
          collect_results/2,
          queue_work/2,
          queue_work/3,
-         eoi/1
+         eoi/1,
+         status/1,
+         active_pipelines/1
         ]).
 %% examples
 -export([example/0,
@@ -93,6 +95,7 @@
 -type exec_option() :: {sink, fitting()}
                      | {trace, all | list() | set()}
                      | {log, sink | sasl}.
+-type stat() :: {atom(), term()}.
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
 %%      processes according the fitting specs given, returning a
@@ -242,7 +245,7 @@ correct_trace(Options) ->
 
 %% @doc Send an end-of-inputs message to the head of the pipe.
 -spec eoi(Pipe::pipe()) -> ok.
-eoi(#pipe{fittings=[Head|_]}) ->
+eoi(#pipe{fittings=[{_,Head}|_]}) ->
     riak_pipe_fitting:eoi(Head).
 
 %% @equiv queue_work(Pipe, Input, infinity)
@@ -257,7 +260,7 @@ queue_work(Pipe, Input) ->
                  Input::term(),
                  Timeout::riak_pipe_vnode:qtimeout())
          -> ok | {error, riak_pipe_vnode:qerror()}.
-queue_work(#pipe{fittings=[Head|_]}, Input, Timeout)
+queue_work(#pipe{fittings=[{_,Head}|_]}, Input, Timeout)
   when Timeout =:= infinity; Timeout =:= noblock ->
     riak_pipe_vnode:queue_work(Head, Input, Timeout).
 
@@ -346,6 +349,133 @@ collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
             %% result order shouldn't matter,
             %% but it's useful to have logging output in time order
             {End, ResultAcc, lists:reverse(LogAcc)}
+    end.
+
+%% @doc Get all active pipelines hosted on `Node'.  Pass the atom
+%%      `global' instead of a node name to get all pipelines hosted on
+%%      all nodes.
+%%
+%%      The return value for a Node is a list of `#pipe{}' records.
+%%      When `global' is used, the return value is a list of `{Node,
+%%      [#pipe{}]}' tuples.
+-spec active_pipelines(node() | global) ->
+         [#pipe{}] | error | [{node(), [#pipe{}] | error}].
+active_pipelines(global) ->
+    [ {Node, active_pipelines(Node)}
+      || Node <- riak_core_node_watcher:nodes(riak_pipe) ];
+active_pipelines(Node) when is_atom(Node) ->
+    case rpc:call(Node, riak_pipe_builder_sup, pipelines, []) of
+        {badrpc, _}=Reason ->
+            {error, Reason};
+        Pipes ->
+            Pipes
+    end.
+
+%% @doc Retrieve details about the status of the workers in this
+%%      pipeline.  The form of the return is a list with one entry per
+%%      fitting in the pipe.  Each fitting's entry is a 2-tuple of the
+%%      form `{FittingName, WorkerDetails}', where `FittingName' is
+%%      the name that was given to the fitting in the call to {@link
+%%      riak_pipe:exec/2}, and `WorkerDetails' is a list with one
+%%      entry per worker.  Each worker entry is a proplist, of the
+%%      form returned by {@link riak_pipe_vnode:status/1}, with two
+%%      properties added: `node', the node on which the worker is
+%%      running, and `partition', the index of the vnode that the
+%%      worker belongs to.
+-spec status(pipe())
+         -> [{FittingName::term(),[PartitionStatus::[stat()]]}].
+status(#pipe{fittings=Fittings}) ->
+    %% get all fittings and their lists of workers
+    FittingWorkers = [ fitting_workers(F) || {_, F} <- Fittings ],
+
+    %% convert to a mapping of workers -> fittings they're performing
+    %% this allows us to make one status call per vnode,
+    %% instead of one per vnode per fitting
+    WorkerFittings = invert_dict(fun(_K, V) -> V end,
+                                 fun(K, _V) -> K end,
+                                 dict:from_list(FittingWorkers)),
+    
+    %% grab all worker-fitting statuses at once
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    WorkerStatuses = dict:map(worker_status(Ring), WorkerFittings),
+
+    %% regroup statuses by fittings
+    PidNames = [ {Name, Pid} || {Name, #fitting{pid=Pid}} <- Fittings ],
+    FittingStatus = invert_dict(fun(_K, V) ->
+                                        {fitting, Pid} =
+                                            lists:keyfind(fitting, 1, V),
+                                        {Name, Pid} =
+                                            lists:keyfind(Pid, 2, PidNames),
+                                        Name
+                                end,
+                                fun(_K, V) -> V end,
+                                WorkerStatuses),
+    dict:to_list(FittingStatus).
+
+%% @doc Given a dict mapping keys to lists of values, "invert" the
+%%      dict to map the values to their keys.
+%%
+%%      That is, for each `{K, [V]}' in `Dict', append `{KeyFun(K,V),
+%%      ValFun(K,V)} to dict.
+%%
+%%      For example:
+%% ```
+%% D0 = dict:from_list([{a, [1, 2, 3]}, {b, [2, 3, 4]}]),
+%% D1 = invert_dict(fun(_K, V) -> V end,
+%%                  fun(K, _V) -> K end,
+%%                  D0),
+%% [{1, [a]}, {2, [a, b]}, {3, [a, b]}, {4, [b]}] = dict:to_list(D1).
+%% '''
+-spec invert_dict(fun((term(), term()) -> term()),
+                  fun((term(), term()) -> term()),
+                  dict()) -> dict().
+invert_dict(KeyFun, ValFun, Dict) ->
+    dict:fold(
+      fun(Key, Vals, DAcc) ->
+              lists:foldl(fun(V, LAcc) ->
+                                  dict:append(KeyFun(Key, V),
+                                              ValFun(Key, V),
+                                              LAcc)
+                          end,
+                          DAcc,
+                          Vals)
+      end,
+      dict:new(),
+      Dict).
+
+%% @doc Get the list of vnodes working for a fitting.
+-spec fitting_workers(#fitting{})
+         -> {#fitting{}, [riak_pipe_vnode:partition()]}.
+fitting_workers(#fitting{pid=Pid}=Fitting) ->
+    case riak_pipe_fitting:workers(Pid) of
+        {ok, Workers} ->
+            {Fitting, Workers};
+        gone ->
+            {Fitting, []}
+    end.
+
+%% @doc Produce a function that can be handed a partition number and a
+%%      list of fittings, and will return the status for those
+%%      fittings on that partition.  The closure over the Ring is a
+%%      way to map over a list without having to fetch the ring
+%%      repeatedly.
+-spec worker_status(riak_core_ring:ring())
+         -> fun( (riak_pipe_vnode:partition(), [#fitting{}])
+                 -> [ [{atom(), term()}] ] ).
+worker_status(Ring) ->
+    fun(Partition, Fittings) ->
+            %% lookup vnode pid
+            Node = riak_core_ring:index_owner(Ring, Partition),
+            {ok, Vnode} = rpc:call(Node,
+                                   riak_core_vnode_master, get_vnode_pid,
+                                   [Partition, riak_pipe_vnode]),
+            
+            %% get status of each worker
+            {Partition, Workers} = riak_pipe_vnode:status(Vnode, Fittings),
+
+            %% add 'node' and 'partition' to status
+            [ [{node, Node}, {partition, Partition} | W]
+              || W <- Workers ]
     end.
 
 %% @doc An example run of a simple pipe.  Uses {@link example_start/0},
@@ -511,7 +641,7 @@ extract_unblocking(Trace) ->
 
 extract_restart_fail(Trace) ->
     [Partition ||
-        {_, {trace, _, {vnode, {restart_fail, Partition}}}} <- Trace].
+        {_, {trace, _, {vnode, {restart_fail, Partition, _}}}} <- Trace].
 
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
@@ -829,7 +959,7 @@ exception_test_() ->
               HeadFittingCrash =
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, [1, 2, 3]),
-                          [Head|_] = Pipe#pipe.fittings,
+                          [{_, Head}|_] = Pipe#pipe.fittings,
                           (catch riak_pipe_fitting:crash(Head, DieFun)),
                           {error, [worker_startup_failed]} =
                               riak_pipe:queue_work(Pipe, [4, 5, 6]),
@@ -853,7 +983,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings],
 
                           %% Aside: exercise riak_pipe_fitting:workers/1.
@@ -870,7 +1000,7 @@ exception_test_() ->
                           hd(FittingPids) ! bogus_message,
 
                           %% Aside: send bogus done message
-                          [Head|_] = Pipe#pipe.fittings,
+                          [{_, Head}|_] = Pipe#pipe.fittings,
                           MyRef = Head#fitting.ref,
                           ok = gen_fsm:sync_send_event(hd(FittingPids),
                                                        {done, MyRef, asdf}),
@@ -905,7 +1035,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings ],
                           Third = lists:nth(3, FittingPids),
                           (catch riak_pipe_fitting:crash(Third, DieFun)),
@@ -938,7 +1068,7 @@ exception_test_() ->
                   fun(Pipe) ->
                           ok = riak_pipe:queue_work(Pipe, 20),
                           timer:sleep(100),
-                          FittingPids = [ P || #fitting{pid=P}
+                          FittingPids = [ P || {_, #fitting{pid=P}}
                                                    <- Pipe#pipe.fittings ],
                           Last = lists:last(FittingPids),
                           (catch riak_pipe_fitting:crash(Last, DieFun)),
