@@ -460,7 +460,7 @@ handoff_finished(_TargetNode, #state{workers=[]}=State) ->
 
 %% @doc Accept handoff data from some other node.  `Data' should be a
 %%      term_to_binary-ed `#worker_handoff{}' record.  See {@link
-%%      encode_handoff_item/1}.
+%%      encode_handoff_item/2}.
 %%
 %%      Ensure that a worker is running for the fitting, merge queues,
 %%      and prepare to handle archive transfer.
@@ -471,7 +471,7 @@ handle_handoff_data(Data, State) ->
                     queue=Queue,
                     blocking=Blocking,
                     archive=Archive} = binary_to_term(Data),
-    case worker_for(Fitting, State) of
+    case worker_for(Fitting, false, State) of
         {ok, Worker} ->
             NewWorker = handoff_worker(Worker, Queue, Blocking, Archive),
             {reply, ok, replace_worker(NewWorker, State)};
@@ -582,7 +582,7 @@ handle_info(_,State) ->
 enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
                               usedpreflist=UsedPreflist},
                  Sender, #state{partition=Partition}=State) ->
-    case worker_for(Fitting, State) of
+    case worker_for(Fitting, true, State) of
         {ok, #worker{details=#fitting_details{module=riak_pipe_w_crash}}}
           when Input == vnode_killer ->
             %% this is used by the eunit test named "Vnode Death"
@@ -623,17 +623,17 @@ enqueue_internal(#cmd_enqueue{fitting=Fitting, input=Input, timeout=TO,
 %% @doc Find the worker for the given `Fitting', or start one if there
 %%      is room on this vnode.  Returns `{ok, Worker}' if a worker
 %%      [now] exists, or `worker_limit_reached' otherwise.
--spec worker_for(#fitting{}, state()) ->
+-spec worker_for(#fitting{}, boolean(), state()) ->
          {ok, #worker{}} | worker_limit_reached | worker_startup_failed.
-worker_for(Fitting, #state{workers=Workers, worker_limit=Limit}=State) ->
+worker_for(Fitting, EnforceLimitP,
+           #state{workers=Workers, worker_limit=Limit}=State) ->
     case worker_by_fitting(Fitting, State) of
         {ok, Worker} ->
             {ok, Worker};
         none ->
-            case length(Workers) < Limit of
-                true ->
+            if (not EnforceLimitP) orelse length(Workers) < Limit ->
                     new_worker(Fitting, State);
-                false ->
+               true ->
                     worker_limit_reached
             end
     end.
@@ -1060,6 +1060,7 @@ archive_internal(#cmd_archive{fitting=F, archive=A},
                         workers_archiving=Archiving}=State) ->
     {value, Worker, NewArchiving} =
         lists:keytake(F, #worker.fitting, Archiving),
+    %% SLF TODO: ?T(Worker#fitting.mumble, [handoff], {handoff, foo, bar}),
     HandoffVal = {Worker#worker.q, Worker#worker.blocking, A},
     NewAcc = (Handoff#handoff.fold)(F, HandoffVal, Handoff#handoff.acc),
     case {Workers, NewArchiving} of

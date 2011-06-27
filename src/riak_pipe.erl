@@ -73,7 +73,7 @@
          example_tick/3,
          example_tick/4]).
 -ifdef(TEST).
--export([do_dep_apps/1, t/0]).
+-export([do_dep_apps/1, t/0, exec_prepare_runtime/1]).
 -endif.
 
 -include("riak_pipe.hrl").
@@ -520,13 +520,30 @@ kill_all_pipe_vnodes() ->
 t() ->
     eunit:test(?MODULE).
 
+save_and_set_env({App, Key, NewVal}) ->
+    put({?MODULE, old, App, Key}, app_helper:get_env(App, Key)),
+    ok = application:set_env(App, Key, NewVal).
+
+restore_env({App, Key, _NewVal}) ->
+    ok = application:set_env(App, Key, erase({?MODULE, old, App, Key})).
+
 dep_apps() ->
     DelMe = "./EUnit-SASL.log",
+    PortOffset = case atom_to_list(node()) of
+                     [$s,$l,$a,$v,$e,SlaveNum|_] -> SlaveNum - $0 + 1;
+                     _                           -> 0
+                 end,
     KillDamnFilterProc = fun() ->
                                  timer:sleep(5),
                                  catch exit(whereis(riak_sysmon_filter), kill),
                                  timer:sleep(5)
                          end,                                 
+    RingDir = "./data.ring-dir",
+    CoreEnvVars = [{riak_core, handoff_ip, "0.0.0.0"},
+                   {riak_core, handoff_port, 9183+PortOffset},
+                   {riak_core, vnode_inactivity_timeout, 150},
+                   {riak_core, ring_creation_size, 8},
+                   {riak_core, ring_state_dir, RingDir}],
     [fun(start) ->
              _ = application:stop(sasl),
              _ = application:load(sasl),
@@ -555,15 +572,15 @@ dep_apps() ->
      webmachine,
      fun(start) ->
              _ = application:load(riak_core),
-             put(old_hand_ip, app_helper:get_env(riak_core, handoff_ip)),
-             put(old_hand_port, app_helper:get_env(riak_core, handoff_port)),
-             ok = application:set_env(riak_core, handoff_ip, "0.0.0.0"),
-             ok = application:set_env(riak_core, handoff_port, 9183),
+             [save_and_set_env(Triple) || Triple <- CoreEnvVars],
              ok = application:start(riak_core);
         (stop) ->
              ok = application:stop(riak_core),
-             ok = application:set_env(riak_core, handoff_ip, get(old_hand_ip)),
-             ok = application:set_env(riak_core, handoff_port, get(old_hand_port));
+             [restore_env(Triple) || Triple <- CoreEnvVars],
+             %% Multi-node tests (e.g. using slaves) can leave behind
+             %% ring state & other stuff that interferes with
+             %% unit test repeatability.
+             os:cmd("rm -rf " ++ RingDir);
         (fullstop) ->
              _ = application:stop(riak_core)
      end,
@@ -581,19 +598,63 @@ do_dep_apps(StartStop) ->
                  (F)                 -> F(StartStop)
               end, Apps).
 
+default_nodename() ->
+    %% 'localhost' hostname must be used 100% consistently everywhere
+    'riak_pipe_testing@localhost'.              % short name!
+
+slave0_nodename() ->
+    'slave0_pipe@localhost'.
+
+start_slave0() ->
+   start_slv('localhost', 'slave0_pipe', slave0_nodename(),
+             "-config ../priv/app.slave0.config").
+
+%% start_slave1() ->
+%%    start_slv('localhost', 'slave1_pipe', 'slave1_pipe@localhost',
+%%              "-config ../priv/app.slave1.config").
+
+%% Painful lessons learned while trying to use 'slave' and EUnit:
+%%
+%% * You need to set up the code path for your slave node.  Nevermind that
+%%   you're sharing the file server with the master node, because the code
+%%   server doesn't appear to be shared.
+%% * You _are_ sharing the file server, so trying to use
+%%   file:set_cwd/1 is a really bad idea, even for a noble reason
+%%   (like trying to get the slave to use a different SASL logging
+%%   file).  So don't ever bother trying to do it.
+
+start_slv(RHS, LHS, NodeName, Extra) ->
+    Res = slave:start_link(RHS, LHS, Extra),
+    [rpc:call(NodeName, code, add_pathz, [Dir]) || Dir <- code:get_path()],
+    rpc:call(NodeName, code, add_patha, ["."]), % eunit-compiled stuff first
+    %% NO! rpc:call(NodeName, file, make_dir, [atom_to_list(NodeName)]),
+    %% NO! ok = rpc:call(NodeName, file, set_cwd, [atom_to_list(NodeName)]),
+    rpc:call(NodeName, ?MODULE, exec_prepare_runtime, [NodeName]),
+    Res.
+
 prepare_runtime() ->
+    prepare_runtime(default_nodename()).
+
+prepare_runtime(_NodeName) ->
      fun() ->
              do_dep_apps(fullstop),
              timer:sleep(5),
+             %% Must start net_kernel before starting apps
+             net_kernel:start([_NodeName, shortnames]), 
              do_dep_apps(start),
              timer:sleep(5),
              [foo1, foo2]
      end.
 
+exec_prepare_runtime(NodeName) ->
+    (prepare_runtime(NodeName))().
+
 teardown_runtime() ->
      fun(_PrepareThingie) ->
              do_dep_apps(stop),
-             timer:sleep(5)
+             net_kernel:stop(),
+             timer:sleep(5),
+             dbg:stop_clear()
      end.    
 
 basic_test_() ->
@@ -702,18 +763,26 @@ basic_test_() ->
      ]
     }.
 
+%% decr_or_crash() is usually used with the riak_pipe_w_xform
+%% fitting: at each fitting, the xform worker will decrement the
+%% count by one.  If the count ever gets to zero, then the worker
+%% will exit.  So, we want a worker to crash if the pipeline
+%% length > input # at head of pipeline.
+
+decr_or_crash(0) ->
+    exit(blastoff);
+decr_or_crash(N) ->
+    N - 1.
+
+xform_or_crash(Input, Partition, FittingDetails) ->
+    ok = riak_pipe_vnode_worker:send_output(
+           decr_or_crash(Input),
+           Partition,
+           FittingDetails).
+
 exception_test_() ->
     AllLog = [{log, sink}, {trace, all}],
     ErrLog = [{log, sink}, {trace, [error]}],
-
-    %% DecrOrCrashFun is usually used with the riak_pipe_w_xform
-    %% fitting: at each fitting, the xform worker will decrement the
-    %% count by one.  If the count ever gets to zero, then the worker
-    %% will exit.  So, we want a worker to crash if the pipeline
-    %% length > input # at head of pipeline.
-    DecrOrCrashFun = fun(0) -> exit(blastoff);
-                        (N) -> N - 1
-                     end,
 
     Sleep1Fun = fun(X) ->
                         timer:sleep(1),
@@ -736,12 +805,6 @@ exception_test_() ->
                 timer:sleep(100),
                 riak_pipe:eoi(Pipe)
         end,
-    XFormDecrOrCrashFun = fun(Input, Partition, FittingDetails) ->
-                                  ok = riak_pipe_vnode_worker:send_output(
-                                         DecrOrCrashFun(Input),
-                                         Partition,
-                                         FittingDetails)
-                          end,
     DieFun = fun() ->
                      exit(diedie)
              end,
@@ -781,7 +844,7 @@ exception_test_() ->
                fun() ->
                        %% 3 fittings, send 0, 1, 2, 500
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
-                           (catch generic_transform(DecrOrCrashFun,
+                           (catch generic_transform(fun decr_or_crash/1,
                                                     XBad2,
                                                     ErrLog, 3)),
                        [{_, 497}] = Res,
@@ -799,7 +862,7 @@ exception_test_() ->
                   end,
               {"generic_transform(TailWorkerCrash)",
                fun() ->
-                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                       {eoi, Res, Trace} = generic_transform(fun decr_or_crash/1,
                                                              TailWorkerCrash,
                                                              ErrLog, 2),
                        [{_, 98}] = Res,
@@ -818,7 +881,7 @@ exception_test_() ->
                   end,
               {"generic_transform(VnodeCrash)",
                fun() ->
-                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                       {eoi, Res, Trace} = generic_transform(fun decr_or_crash/1,
                                                              VnodeCrash,
                                                              ErrLog, 2),
                        [{_, 98}] = Res,
@@ -892,7 +955,7 @@ exception_test_() ->
               {"generic_transform(MiddleFittingNormal)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
-                           (catch generic_transform(DecrOrCrashFun,
+                           (catch generic_transform(fun decr_or_crash/1,
                                                     MiddleFittingNormal,
                                                     ErrLog, 5)),
                        [{_, 15}] = Res,
@@ -921,7 +984,7 @@ exception_test_() ->
               {"generic_transform(MiddleFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
-                           (catch generic_transform(DecrOrCrashFun,
+                           (catch generic_transform(fun decr_or_crash/1,
                                                     MiddleFittingCrash,
                                                     ErrLog, 5)),
                        [{_, 15}] = Res,
@@ -953,7 +1016,7 @@ exception_test_() ->
               {"generic_transform(TailFittingCrash)",
                fun() ->
                        {'EXIT', {success_so_far, {timeout, Res, Trace}}} =
-                           (catch generic_transform(DecrOrCrashFun,
+                           (catch generic_transform(fun decr_or_crash/1,
                                                     TailFittingCrash,
                                                     ErrLog, 5)),
                        [{_, 15}] = Res,
@@ -995,7 +1058,7 @@ exception_test_() ->
               {"worker limit for one pipe",
                fun() ->
                        PipeLen = 90,
-                       {eoi, Res, Trace} = generic_transform(DecrOrCrashFun,
+                       {eoi, Res, Trace} = generic_transform(fun decr_or_crash/1,
                                                              Send_one_100,
                                                              AllLog, PipeLen),
                        [] = Res,
@@ -1016,7 +1079,7 @@ exception_test_() ->
                                 PipeLen,
                                 #fitting_spec{name="worker limit mult pipes",
                                               module=riak_pipe_w_xform,
-                                              arg=XFormDecrOrCrashFun,
+                                              arg=fun xform_or_crash/3,
                                               chashfun=fun zero_part/1}),
                        {ok, Pipe1} =
                            riak_pipe:exec(Spec, AllLog),
@@ -1043,7 +1106,7 @@ exception_test_() ->
                                 PipeLen,
                                 #fitting_spec{name="foo",
                                               module=riak_pipe_w_xform,
-                                              arg=XFormDecrOrCrashFun}),
+                                              arg=fun xform_or_crash/3}),
                        {ok, Pipe1} =
                            riak_pipe:exec(Spec, AllLog),
                        [ok = riak_pipe:queue_work(Pipe1, X) ||
@@ -1276,6 +1339,122 @@ validate_test_() ->
                end}
       end
      ]}.
+
+limits_test_() ->
+    AllLog = [{log, sink}, {trace, all}],
+
+     {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+      [
+       {timeout, 20, 
+        {"Verify that handoff mechanism does what it is supposed to",
+         fun() ->
+                 PipeLen = 20,
+                 Spec = [#fitting_spec{name="worker limit mult pipes " ++
+                                           integer_to_list(X),
+                                       module=riak_pipe_w_xform,
+                                       arg=fun xform_or_crash/3
+                                       %% , chashfun=fun zero_part/1
+                                      } || X <- lists:seq(1, PipeLen)],
+                 {ok, Slave0} = start_slave0(),
+                 SlaveNode0 = slave0_nodename(),
+
+                 riak_core_gossip:send_ring(node(), SlaveNode0),
+                 timer:sleep(500),
+                 riak_core_gossip:send_ring(SlaveNode0, node()),
+                 timer:sleep(200),
+                 {ok, SlaveRing} = rpc:call(SlaveNode0, riak_core_ring_manager,
+                                            get_my_ring, []),
+                 {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+                 ?assert(riak_core_ring:all_owners(SlaveRing) ==
+                             riak_core_ring:all_owners(MyRing)),
+
+                 {ok, Pipe1} =
+                     riak_pipe:exec(Spec, AllLog),
+                 {ok, Pipe2} =
+                     riak_pipe:exec(Spec, AllLog),
+
+                 ok = riak_pipe:queue_work(Pipe1, 100),
+                 timer:sleep(100),
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 rpc:call(Slave0, erlang, halt, []),
+                 slave:stop(Slave0),
+                 timer:sleep(200),
+
+                 Slave0 = Slave0,
+                 rpc:call(Slave0, init, halt, []),
+                 slave:stop(Slave0),
+                 timer:sleep(200),
+                 pang = net_adm:ping(SlaveNode0),
+
+                 [ok = riak_pipe:queue_work(Pipe2, X) ||
+                     X <- lists:seq(101, 120)],
+                 io:format(user, "LINE ~p\n", [?LINE]),
+
+                 {ok, Slave0} = start_slave0(),
+
+                 %% The ?T() macro is a bit annoying here, because we
+                 %% need to know the #fitting_details in order to use
+                 %% it.  But the tracing that I'd like to do at the
+                 %% vnode level doesn't have that record available to
+                 %% it, and it looks like it's a royal pain to add it.
+                 %% So we'll steal something from Jon's playbook and
+                 %% use riak_core_tracer instead.
+                 riak_core_tracer:start_link(),
+                 riak_core_tracer:reset(),
+                 riak_core_tracer:filter(
+                   [{riak_pipe_vnode, handle_handoff_command},
+                    {riak_pipe_vnode, replace_worker}
+                   ],
+                   fun({trace, _Pid, call,
+                        {riak_pipe_vnode, handle_handoff_command,
+                         [Cmd, _Sender, _State]}}) ->
+                           element(1, Cmd);
+                      %% Bah, I can't get this clause to fire.
+                      ({trace, _Pid, call,
+                        {riak_pipe_vnode, replace_worker, _Args}}) ->
+                           replace_worker
+                   end),
+                 riak_core_tracer:collect(5000),
+
+                 %% Give slave a chance to start and master to notice it.
+                 timer:sleep(500),
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 [ok = riak_pipe:queue_work(Pipe2, X) ||
+                     X <- lists:seq(121, 140)],
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 riak_pipe:eoi(Pipe1),
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 riak_pipe:eoi(Pipe2),
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 {eoi, _Out1, Trace1} = collect_results(Pipe1, 1000),
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 {eoi, _Out2, Trace2} = collect_results(Pipe2, 1000),
+
+                 io:format(user, "LINE ~p\n", [?LINE]),
+                 [] = extract_trace_errors(Trace1),
+                 [] = extract_trace_errors(Trace2),
+                 1 = length(_Out1),
+                 40 = length(_Out2),
+
+                 %% VM trace verification
+                 riak_core_tracer:stop_collect(),
+                 Traces = riak_core_tracer:results(),
+                 FoldReqs = length([x || {_, riak_core_fold_req_v1} <- Traces]),
+                 ?assert(FoldReqs > 0),         % At least 4 ?FOLD_REQ{} ?
+                 Archives = length([x || {_, cmd_archive} <- Traces]),
+                 ?assert(Archives > 0),          % At least 67 ?
+                 Replaces = length([x || {_, replace_worker} <- Traces]),
+                 ?assert(Replaces > 0)          % At least 67 ?
+         end}}
+      ]
+     }.
 
 should_be_the_very_last_test() ->
     Leftovers = [{Pid, X} ||
