@@ -30,6 +30,7 @@
 %% API
 -export([start_link/0]).
 -export([new_pipeline/2,
+         pipelines/0,
          builder_pids/0]).
 
 %% Supervisor callbacks
@@ -56,12 +57,24 @@ start_link() ->
 new_pipeline(Spec, Options) ->
     case supervisor:start_child(?MODULE, [Spec, Options]) of
         {ok, Pid, Ref} ->
-            {ok, Fittings} = riak_pipe_builder:get_fittings(Pid, Ref),
-            {sink, Sink} = lists:keyfind(sink, 1, Options),
-            {ok, #pipe{builder=Pid, fittings=Fittings, sink=Sink}};
+            case riak_pipe_builder:pipeline(Pid) of
+                {ok, #pipe{sink=#fitting{ref=Ref}}=Pipe} ->
+                    {ok, Pipe};
+                _ ->
+                    {error, startup_failure}
+            end;
         Error ->
             Error
     end.
+
+%% @doc Get the list of pipelines hosted on this node.
+-spec pipelines() -> [#pipe{}].
+pipelines() ->
+    Children = builder_pids(),
+    Responses = [ riak_pipe_builder:pipeline(BuilderPid)
+                  || {_, BuilderPid, _, _} <- Children ],
+    %% filter out gone responses
+    [ P || {ok, #pipe{}=P} <- Responses ].
 
 %% @doc Get information about the builders supervised here.
 -spec builder_pids() -> [{term(),

@@ -44,7 +44,8 @@
          eoi/2,
          next_input/2,
          reply_archive/3,
-         status/1]).
+         status/1,
+         status/2]).
 -export([hash_for_partition/1]).
 
 -include_lib("riak_core/include/riak_core_vnode.hrl"). %% ?FOLD_REQ
@@ -71,6 +72,12 @@
 -define(DEFAULT_WORKER_Q_LIMIT, 64).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
+-record(worker_perf, {started :: calendar:t_now(),
+                       processed = 0 :: non_neg_integer(),
+                       failures = 0 :: non_neg_integer(),
+                       work_time = 0 :: non_neg_integer(),
+                       idle_time = 0 :: non_neg_integer(),
+                       last_time :: calendar:t_now()}).
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
                  details :: #fitting_details{},
@@ -79,7 +86,8 @@
                  q :: queue(),
                  q_limit :: pos_integer(),
                  blocking :: queue(),
-                 handoff :: undefined | {waiting, term()} }).
+                 handoff :: undefined | {waiting, term()},
+                 perf :: #worker_perf{}}).
 -record(worker_handoff, {fitting :: #fitting{},
                          queue :: queue(),
                          blocking :: queue(),
@@ -108,7 +116,8 @@
 -record(cmd_next_input, {fitting :: #fitting{}}).
 -record(cmd_archive, {fitting :: #fitting{},
                       archive :: term()}).
--record(cmd_status, {sender :: term()}).
+-record(cmd_status, {sender :: term(),
+                     fittings :: all | [#fitting{}]}).
 
 %% API
 
@@ -376,14 +385,50 @@ reply_archive(Pid, Fitting, Archive) ->
 %%      `blocking_length'
 %%</dt><dd>
 %%      Integer number of requests blocking on the queue.
+%%</dd><dt>
+%%      `started'
+%%</dt><dd>
+%%      An {@link erlang:now/0} tuple, indicating the time that the
+%%      worker started.
+%%</dd><dt>
+%%      `processed'
+%%</dt><dd>
+%%      Integer number of inputs that the worker has processed.
+%%</dd><dt>
+%%      `failures'
+%%</dt><dd>
+%%      Integer number of times that the worker has failed (and was
+%%      restarted).
+%%</dd><dt>
+%%      `work_time'
+%%</dt><dd>
+%%      Total time the worker has spent processing inputs (as opposed
+%%      to waiting, idle for them).  Given as an integer number of
+%%      microseconds.
+%%</dd><dt>
+%%      `idle_time'
+%%</dt><dd>
+%%      Total time the worker has spent waiting for inputs (as opposed
+%%      to working on them).  Given as an integer number of
+%%      microseconds.  Should be roughly equal to
+%%      `(now()-started)-work_time'.
 %%</dd></dl>
 -spec status(pid()) -> {partition(), [[{atom(), term()}]]}.
 status(Pid) ->
+    status(Pid, all).
+
+%% @doc Produces the same type of data as {@link status/1}, but only
+%%      includes information for the fittings given.
+-spec status(pid(), [#fitting{}] | all)
+         -> {partition(), [[{atom(), term()}]]}.
+status(Pid, Fittings) when is_list(Fittings); Fittings =:= all ->
     Ref = make_ref(),
-    riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()}}),
+    riak_core_vnode:send_command(Pid, #cmd_status{sender={raw, Ref, self()},
+                                                  fittings=Fittings}),
     receive
         {Ref, Reply} -> Reply
     end.
+    
 
 %% @doc Handle a vnode command.
 -spec handle_command(term(), sender(), state()) ->
@@ -521,7 +566,8 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                              Reason} of
                            {true, true, normal} ->
                                ?T(Worker#worker.details, [done],
-                                  {vnode, {done, Partition}}),
+                                  {vnode, {done, Partition,
+                                           proplist_perf(Worker)}}),
                                send_done(Worker#worker.fitting),
                                remove_worker(Worker, State);
                            _ ->
@@ -652,6 +698,8 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
                 erlang:link(Pid),
+                Start = now(),
+                Perf = #worker_perf{started=Start, last_time=Start},
                 ?T(Details, [worker], {vnode, {start, P}}),
                 {ok, #worker{pid=Pid,
                              fitting=Fitting,
@@ -660,7 +708,8 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                              inputs_done=false,
                              q=queue:new(),
                              q_limit=WQL,
-                             blocking=queue:new()}};
+                             blocking=queue:new(),
+                             perf=Perf}};
             gone ->
                 error_logger:error_msg(
                   "Pipe worker startup failed:"
@@ -691,6 +740,8 @@ new_fwd_worker(FittingDetails,
     {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                   Sup, ForwardDetails),
     erlang:link(Pid),
+    Start = now(),
+    Perf = #worker_perf{started=Start, last_time=Start},
     ?T(FittingDetails, [fwd_worker], {vnode, {start, P}}),
     {ok, #worker{pid=Pid,
                  fitting=ForwardDetails#fitting_details.fitting,
@@ -699,7 +750,8 @@ new_fwd_worker(FittingDetails,
                  inputs_done=false,
                  q=queue:new(),
                  q_limit=WQL,
-                 blocking=queue:new()}}.
+                 blocking=queue:new(),
+                 perf=Perf}}.
 
 %% @doc Add an input to the worker's queue.  If the worker is
 %%      `waiting', send the input to it, skipping the queue.  If the
@@ -711,7 +763,8 @@ add_input(#worker{state=waiting}=Worker,
           Input, _Sender, _TO, UsedPreflist) ->
     %% worker has been waiting for something to enter its queue
     send_input(Worker, {Input, UsedPreflist}),
-    {ok, Worker#worker{state={working, Input}}};
+    PerfWorker = roll_perf(Worker),
+    {ok, PerfWorker#worker{state={working, Input}}};
 add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker,
           Input, Sender, TO, UsedPreflist) ->
     case queue:len(Q) < QL of
@@ -810,7 +863,8 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
 %%      the front one to the end of the work queue, and reply `ok' to
 %%      the process that requested its addition (unblocking it).
 -spec next_input_nohandoff(#worker{}, state()) -> {noreply, state()}.
-next_input_nohandoff(Worker, #state{partition=Partition}=State) ->
+next_input_nohandoff(WorkerUnperf, #state{partition=Partition}=State) ->
+    Worker = roll_perf(WorkerUnperf),
     case queue:out(Worker#worker.q) of
         {{value, {Input, UsedPreflist}}, NewQ} ->
             ?T(Worker#worker.details, [queue],
@@ -916,9 +970,10 @@ remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
 %%      and the requests in its block queue are sent `{error, fail}'
 %%      responses.
 -spec restart_worker(#worker{}, state()) -> state().
-restart_worker(#worker{details=FD}=Worker,
+restart_worker(#worker{details=FD}=UnstatWorker,
                #state{partition=Partition}=State)
   when FD#fitting_details.module /= ?FORWARD_WORKER_MODULE ->
+    Worker = inc_fail_perf(roll_perf(UnstatWorker)),
     CleanState = remove_worker(Worker, State),
     case new_worker(Worker#worker.fitting, CleanState) of
         {ok, NewWorker} ->
@@ -927,11 +982,12 @@ restart_worker(#worker{details=FD}=Worker,
             CopiedWorker = NewWorker#worker{
                              q=Worker#worker.q,
                              blocking=Worker#worker.blocking,
-                             inputs_done=Worker#worker.inputs_done},
+                             inputs_done=Worker#worker.inputs_done,
+                             perf=Worker#worker.perf},
             replace_worker(CopiedWorker, CleanState);
         _Error ->
             ?T(Worker#worker.details, [restart_fail],
-               {vnode, {restart_fail, Partition}}),
+               {vnode, {restart_fail, Partition, proplist_perf(Worker)}}),
             %% fail blockers, so they resubmit elsewhere
             [ reply_to_blocker(Blocker, {error, worker_restart_fail})
               || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
@@ -993,9 +1049,17 @@ send_done(Fitting) ->
 %% @doc Handle a request for status.  Generate the worker detail
 %%      list, and send it to the requester.
 -spec status_internal(#cmd_status{}, state()) -> {noreply, state()}.
-status_internal(#cmd_status{sender=Sender},
+status_internal(#cmd_status{sender=Sender, fittings=Fittings},
                 #state{partition=P, workers=Workers}=State) ->
-    Reply = {P, [ worker_detail(W) || W <- Workers ]},
+    FilteredWorkers =
+        case Fittings of
+            all ->
+                Workers;
+            _ ->
+                [ W || W <- Workers,
+                       lists:member(W#worker.fitting, Fittings)]
+        end,
+    Reply = {P, [ worker_detail(W) || W <- FilteredWorkers]},
     %% riak_core_vnode:command(Pid) does not set reply properly
     riak_core_vnode:reply(Sender, Reply),
     {noreply, State}.
@@ -1004,7 +1068,7 @@ status_internal(#cmd_status{sender=Sender},
 -spec worker_detail(#worker{}) -> [{atom(), term()}].
 worker_detail(#worker{fitting=Fitting, details=Details,
                       state=State, inputs_done=Done,
-                      q=Q, blocking=B}) ->
+                      q=Q, blocking=B}=Worker) ->
     [{fitting, Fitting#fitting.pid},
      {name, Details#fitting_details.name},
      {module, Details#fitting_details.module},
@@ -1014,7 +1078,51 @@ worker_detail(#worker{fitting=Fitting, details=Details,
              end},
      {inputs_done, Done},
      {queue_length, queue:len(Q)},
-     {blocking_length, queue:len(B)}].
+     {blocking_length, queue:len(B)}
+     |proplist_perf(Worker)].
+
+%% @doc Update the appropriate fields in the worker's performance
+%%      statistics.  This function should be called before updating
+%%      the worker to its next state, as the function depends on
+%%      `#worker.state' to know which fields to update.  That is, if
+%%      the worker has just finished processing input A, this function
+%%      should be called while its state is still set to `{working, A}'.
+-spec roll_perf(#worker{}) -> #worker{}.
+roll_perf(#worker{perf=Perf, state=State}=Worker) ->
+    Now = now(),
+    Duration = timer:now_diff(Now, Perf#worker_perf.last_time),
+    TimedPerf = case State of
+                    {working,_} ->
+                        Perf#worker_perf{
+                          processed=Perf#worker_perf.processed+1,
+                          work_time=Perf#worker_perf.work_time+Duration};
+                    _ ->
+                        Perf#worker_perf{
+                          idle_time=Perf#worker_perf.idle_time+Duration}
+                end,
+    Worker#worker{perf=TimedPerf#worker_perf{last_time=Now}}.
+
+%% @doc Increment the failure counter in this worker's performance
+%%      statistics.
+-spec inc_fail_perf(#worker{}) -> #worker{}.
+inc_fail_perf(#worker{perf=Perf}=Worker) ->
+    FailPerf = Perf#worker_perf{failures=1+Perf#worker_perf.failures},
+    Worker#worker{perf=FailPerf}.
+    
+%% @doc Convert the worker's performance statistics to a proplist, for
+%%      sharing.
+-spec proplist_perf(#worker{}) -> [{atom(), term()}].
+proplist_perf(#worker{perf=Perf, state=State}) ->
+    SinceLast = timer:now_diff(now(), Perf#worker_perf.last_time),
+    {AddWork, AddIdle} = case State of
+                             {working, _} -> {SinceLast, 0};
+                             _            -> {0, SinceLast}
+                         end,
+    [{started, Perf#worker_perf.started},
+     {processed, Perf#worker_perf.processed},
+     {failures, Perf#worker_perf.failures},
+     {work_time, Perf#worker_perf.work_time + AddWork},
+     {idle_time, Perf#worker_perf.idle_time + AddIdle}].
 
 %% @doc Handle the fold request to start handoff.  Immediately ask all
 %%      `waiting' workers to archive, and note that others should

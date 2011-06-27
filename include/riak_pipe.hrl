@@ -28,7 +28,7 @@
 -record(pipe,
         {
           builder :: pid(),
-          fittings :: [#fitting{}],
+          fittings :: [{Name::term(), #fitting{}}],
           sink :: #fitting{}
         }).
 
