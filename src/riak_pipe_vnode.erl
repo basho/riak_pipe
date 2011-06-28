@@ -1060,7 +1060,6 @@ archive_internal(#cmd_archive{fitting=F, archive=A},
                         workers_archiving=Archiving}=State) ->
     {value, Worker, NewArchiving} =
         lists:keytake(F, #worker.fitting, Archiving),
-    %% SLF TODO: ?T(Worker#fitting.mumble, [handoff], {handoff, foo, bar}),
     HandoffVal = {Worker#worker.q, Worker#worker.blocking, A},
     NewAcc = (Handoff#handoff.fold)(F, HandoffVal, Handoff#handoff.acc),
     case {Workers, NewArchiving} of

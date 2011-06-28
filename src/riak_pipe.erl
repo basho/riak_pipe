@@ -1383,7 +1383,6 @@ limits_test_() ->
                  slave:stop(Slave0),
                  timer:sleep(200),
 
-                 Slave0 = Slave0,
                  rpc:call(Slave0, init, halt, []),
                  slave:stop(Slave0),
                  timer:sleep(200),
@@ -1412,7 +1411,6 @@ limits_test_() ->
                         {riak_pipe_vnode, handle_handoff_command,
                          [Cmd, _Sender, _State]}}) ->
                            element(1, Cmd);
-                      %% Bah, I can't get this clause to fire.
                       ({trace, _Pid, call,
                         {riak_pipe_vnode, replace_worker, _Args}}) ->
                            replace_worker
