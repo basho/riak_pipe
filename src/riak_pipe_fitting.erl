@@ -89,7 +89,7 @@ start_link(Builder, Spec, Output, Options) ->
 eoi(#fitting{pid=Pid, ref=Ref, chashfun=C}) when C =/= sink ->
     gen_fsm:send_event(Pid, {eoi, Ref}).
 
-%% @doc Request the details about this fitting.  The ring parition
+%% @doc Request the details about this fitting.  The ring partition
 %%      index of the vnode requesting the details is included such
 %%      that the fitting can inform the vnode of end-of-inputs later.
 %%      This function assumes that it is being called from the vnode
