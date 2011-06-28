@@ -1378,7 +1378,6 @@ limits_test_() ->
                  ok = riak_pipe:queue_work(Pipe1, 100),
                  timer:sleep(100),
 
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  rpc:call(Slave0, erlang, halt, []),
                  slave:stop(Slave0),
                  timer:sleep(200),
@@ -1390,7 +1389,6 @@ limits_test_() ->
 
                  [ok = riak_pipe:queue_work(Pipe2, X) ||
                      X <- lists:seq(101, 120)],
-                 io:format(user, "LINE ~p\n", [?LINE]),
 
                  {ok, Slave0} = start_slave0(),
 
@@ -1420,22 +1418,13 @@ limits_test_() ->
                  %% Give slave a chance to start and master to notice it.
                  timer:sleep(500),
 
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  [ok = riak_pipe:queue_work(Pipe2, X) ||
                      X <- lists:seq(121, 140)],
-
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  riak_pipe:eoi(Pipe1),
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  riak_pipe:eoi(Pipe2),
-
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  {eoi, _Out1, Trace1} = collect_results(Pipe1, 1000),
-
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  {eoi, _Out2, Trace2} = collect_results(Pipe2, 1000),
 
-                 io:format(user, "LINE ~p\n", [?LINE]),
                  [] = extract_trace_errors(Trace1),
                  [] = extract_trace_errors(Trace2),
                  1 = length(_Out1),
