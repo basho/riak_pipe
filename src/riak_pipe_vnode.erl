@@ -570,6 +570,11 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                                            proplist_perf(Worker)}}),
                                send_done(Worker#worker.fitting),
                                remove_worker(Worker, State);
+                           {true, false, normal} ->
+                               %% inputs arrived between asking the worker
+                               %% to shutdown, and it shutting down;
+                               %% silently restart
+                               restart_worker(Worker, State);
                            _ ->
                                if Reason /= processing_error ->
                                        %% the sink has not yet been
@@ -577,7 +582,7 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
                                        worker_error(Reason, Worker, State);
                                   true -> ok
                                end,
-                               restart_worker(Worker, State)
+                               restart_worker(inc_fail_perf(Worker), State)
                        end;
                    none ->
                        %% TODO: log this somewhere?
@@ -973,7 +978,7 @@ remove_worker(#worker{fitting=F}, #state{workers=Workers}=State) ->
 restart_worker(#worker{details=FD}=UnstatWorker,
                #state{partition=Partition}=State)
   when FD#fitting_details.module /= ?FORWARD_WORKER_MODULE ->
-    Worker = inc_fail_perf(roll_perf(UnstatWorker)),
+    Worker = roll_perf(UnstatWorker),
     CleanState = remove_worker(Worker, State),
     case new_worker(Worker#worker.fitting, CleanState) of
         {ok, NewWorker} ->
