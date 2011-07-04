@@ -13,7 +13,8 @@
           module :: atom(),
           arg :: term(),
           output :: #fitting{},
-          options :: riak_pipe:exec_opts()
+          options :: riak_pipe:exec_opts(),
+          q_limit :: pos_integer()
         }).
 
 -record(fitting_spec,
@@ -22,7 +23,8 @@
           module :: atom(),
           arg :: term(),
           chashfun = fun chash:key_of/1 :: riak_pipe_vnode:chashfun(),
-          nval = 1 :: riak_pipe_vnode:nval()
+          nval = 1 :: riak_pipe_vnode:nval(),
+          q_limit = 64 :: pos_integer()
         }).
 
 -record(pipe,
