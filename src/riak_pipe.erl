@@ -207,7 +207,7 @@ ensure_sink(Options) ->
                                   _ ->
                                       HFSink
                               end,
-                    lists:keyreplace(sink, 1, Options, RHFSink);
+                    lists:keyreplace(sink, 1, Options, {sink, RHFSink});
                true ->
                     throw({invalid_sink, nopid})
             end;
