@@ -525,6 +525,8 @@ validate_nval(NVal) ->
               " or a function of arity 1; not a ~p",
               [riak_pipe_v:type_of(NVal)])}.
 
+%% @doc Validate the q_limit parameter.  This must be a positive integer.
+-spec validate_q_limit(term()) -> ok | {error, string()}.
 validate_q_limit(QLimit) when is_integer(QLimit) ->
     if QLimit > 0 -> ok;
        true ->

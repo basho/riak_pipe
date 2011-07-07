@@ -71,5 +71,5 @@ riak_core_pb.erl:132: The pattern <Binary, 'string'> can never match the type <'
 ###
 ### Warnings from validation code, where user code might violate -spec
 ###
-riak_pipe_fitting.erl:496: The variable NVal can never match since previous clauses completely covered the type fun((_) -> pos_integer()) | pos_integer()
-
+riak_pipe_fitting.erl:522: The variable NVal can never match since previous clauses completely covered the type fun((_) -> pos_integer()) | pos_integer()
+riak_pipe_fitting.erl:536: The variable QLimit can never match since previous clauses completely covered the type pos_integer()
