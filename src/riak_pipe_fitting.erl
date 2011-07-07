@@ -141,7 +141,7 @@ crash(Pid, Fun) ->
             | riak_pipe:exec_opts()]) ->
          {ok, wait_upstream_eoi, state()}.
 init([Builder,
-      #fitting_spec{name=Name, module=Module, arg=Arg}=Spec,
+      #fitting_spec{name=Name, module=Module, arg=Arg, q_limit=QLimit}=Spec,
       Output,
       Options]) ->
     Fitting = fitting_record(self(), Spec, Output),
@@ -150,7 +150,8 @@ init([Builder,
                                module=Module,
                                arg=Arg,
                                output=Output,
-                               options=Options},
+                               options=Options,
+                               q_limit=QLimit},
     
     ?T(Details, [], {fitting, init_started}),
 
@@ -430,7 +431,8 @@ validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,
                                chashfun=HashFun,
-                               nval=NVal}) ->
+                               nval=NVal,
+                               q_limit=QLimit}) ->
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
@@ -462,6 +464,14 @@ validate_fitting(#fitting_spec{name=Name,
               "Invalid nval in fitting spec \"~s\":~n~s",
               [format_name(Name), NVError]),
             throw(badarg)
+    end,
+    case validate_q_limit(QLimit) of
+        ok -> ok;
+        {error, QLError} ->
+            error_logger:error_msg(
+              "Invalid q_limit in fitting spec \"~s\":~n~s",
+              [format_name(Name), QLError]),
+            throw(badard)
     end;
 validate_fitting(Other) ->
     error_logger:error_msg(
@@ -514,6 +524,19 @@ validate_nval(NVal) ->
               "expected a positive integer,"
               " or a function of arity 1; not a ~p",
               [riak_pipe_v:type_of(NVal)])}.
+
+%% @doc Validate the q_limit parameter.  This must be a positive integer.
+-spec validate_q_limit(term()) -> ok | {error, string()}.
+validate_q_limit(QLimit) when is_integer(QLimit) ->
+    if QLimit > 0 -> ok;
+       true ->
+            {error, io_lib:format(
+                      "expected a positive integer, found ~p", [QLimit])}
+    end;
+validate_q_limit(QLimit) ->
+    {error, io_lib:format(
+              "expected a positive integer, not a ~p",
+              [riak_pipe_v:type_of(QLimit)])}.
 
 %% @doc Coerce a fitting name into a printable string.
 -spec format_name(term()) -> iolist().

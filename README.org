@@ -178,9 +178,15 @@ in =include/riak_pipe.hrl=.
                               %% specification of how to distribute
                               %% inputs for this fitting
 
-   nval = 1 %% positive integer, default 1, indicates how many vnodes
+   nval = 1,%% positive integer, default 1, indicates how many vnodes
             %% may be asked to handle an input for this fitting,
             %% before declaring the input unfit for processing
+
+   q_limit = 64 %% positive integer, default 64, sets the maximum
+                %% number of elements allowed in a worker's queue,
+                %% the actual queue limit is the lesser of this value
+                %% and the worker_q_limit variable in riak_pipe's
+                %% application environment (default 4096)
 }
 #+END_SRC
 

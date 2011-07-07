@@ -69,7 +69,7 @@
                 | preflist_exhausted.
 
 -define(DEFAULT_WORKER_LIMIT, 50).
--define(DEFAULT_WORKER_Q_LIMIT, 64).
+-define(DEFAULT_WORKER_Q_LIMIT, 4096).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
 -record(worker_perf, {started :: calendar:t_now(),
@@ -153,8 +153,10 @@ validate_or_exit(Thing, Validator, Msg) ->
 %%</dd><dt>
 %%      `worker_queue_limit'
 %%</dt><dd>
-%%      Positive integer, default 64. The maximum length of each
-%%      worker's input queue.
+%%      Positive integer, default 4096. The maximum length of each
+%%      worker's input queue.  The actual cap for a fitting's queue is
+%%      the lesser of this number and the `q_limit' specified in the
+%%      startup spec.
 %%</dd></dl>
 -spec init([partition()]) -> {ok, state()}.
 init([Partition]) ->
@@ -693,7 +695,7 @@ worker_for(Fitting, EnforceLimitP,
 new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
     try
         case riak_pipe_fitting:get_details(Fitting, P) of
-            {ok, Details} ->
+            {ok, #fitting_details{q_limit=FQL}=Details} ->
                 erlang:monitor(process, Fitting#fitting.pid),
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
@@ -707,7 +709,7 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                              state=init,
                              inputs_done=false,
                              q=queue:new(),
-                             q_limit=WQL,
+                             q_limit=lists:min([WQL, FQL]),
                              blocking=queue:new(),
                              perf=Perf}};
             gone ->
