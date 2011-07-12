@@ -105,7 +105,18 @@ process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
             end,
             ?T(FittingDetails, [], {crashing, Input}),
             exit(process_input_crash);
-        _ ->
+        {recurse_done_pause, _} ->
+            %% "restart after eoi" test in riak_pipe uses this
+            %% behavior see done/1 for more details
+            case Input of
+                [_] -> ok;
+                [_|More] ->
+                    timer:sleep(100),
+                    riak_pipe_vnode_worker:recurse_input(
+                      More, Partition, FittingDetails)
+            end,
+            {ok, State};
+        _Other ->
             riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
             ?T(FittingDetails, [], {processed, Input}),
             {ok, State}
@@ -113,5 +124,14 @@ process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
 
 %% @doc Unused.
 -spec done(state()) -> ok.
-done(_State) ->
-    ok.
+done(#state{fd=FittingDetails}) ->
+    case FittingDetails#fitting_details.arg of
+        {recurse_done_pause, Time} ->
+            %% "restart after eoi" test in riak_pipe exploits this
+            %% sleep to get more input queued while the worker is
+            %% shutting down
+            timer:sleep(Time);
+        _ ->
+            ok
+    end.
+            

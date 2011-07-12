@@ -643,6 +643,14 @@ extract_restart_fail(Trace) ->
     [Partition ||
         {_, {trace, _, {vnode, {restart_fail, Partition, _}}}} <- Trace].
 
+extract_restart(Trace) ->
+    [Partition ||
+        {_, {trace, _, {vnode, {restart, Partition}}}} <- Trace].
+
+extract_vnode_done(Trace) ->
+    [{Partition, Stats} ||
+        {_, {trace, _, {vnode, {done, Partition, Stats}}}} <- Trace].
+
 kill_all_pipe_vnodes() ->
     [exit(VNode, kill) ||
         VNode <- riak_core_vnode_master:all_nodes(riak_pipe_vnode)].
@@ -1401,6 +1409,61 @@ exception_test_() ->
                        riak_pipe:eoi(Pipe),
                        {eoi, Res, []} = riak_pipe:collect_results(Pipe),
                        ?assertEqual([], Res)
+               end}
+      end,
+      fun(_) ->
+              %% workers restarted because of recursive inputs should
+              %% not increase the "fail" counter
+              
+              %% methodology: send an input to partition A and
+              %% imediately send eoi; have A send a recursive input to
+              %% partition B; have B send a recursive input to C;
+              %% finally have C send a recursive in put back to A
+              %%
+              %% this flow should give worker A time to start shutting
+              %% down, but not to finish, resulting in an input in its
+              %% queue after it completes its done/1 function
+              {"restart after eoi",
+               fun() ->
+                       Inputs = [0, 1, 2, 0],
+                       ChashFun = fun([Head|_]) ->
+                                          chash:key_of(Head)
+                                  end,
+                       Spec = #fitting_spec{name=restarter,
+                                            module=riak_pipe_w_crash,
+                                            arg={recurse_done_pause, 500},
+                                            chashfun=ChashFun},
+
+                       %% just make sure we are bouncing between partitions
+                       {ok, R} = riak_core_ring_manager:get_my_ring(),
+                       ?assert(riak_core_ring:preflist(
+                                 ChashFun(Inputs), R) /=
+                                   riak_core_ring:preflist(
+                                     ChashFun(tl(Inputs)), R)),
+                       ?assert(riak_core_ring:preflist(
+                                 ChashFun(Inputs), R) /=
+                                   riak_core_ring:preflist(
+                                     ChashFun(tl(tl(Inputs))), R)),
+
+                       {ok, Pipe} =
+                           riak_pipe:exec(
+                             [Spec],
+                             [{log, sink},{trace, [error, done, restart]}]),
+                       riak_pipe:queue_work(Pipe, Inputs),
+                       riak_pipe:eoi(Pipe),
+                       {eoi, [], Trace} = riak_pipe:collect_results(Pipe),
+
+                       %% no error traces -- the error will say
+                       %% {reason, normal} if the worker received new
+                       %% inputs while shutting down due to eoi
+                       ?assertEqual([], extract_trace_errors(Trace)),
+                       
+                       %% A should have restarted, but not counted failure
+                       [Restarted] = extract_restart(Trace),
+                       Dones = extract_vnode_done(Trace),
+                       RestartStats = proplists:get_value(Restarted, Dones),
+                       ?assertEqual(0, proplists:get_value(failures,
+                                                           RestartStats))
                end}
       end
      ]
