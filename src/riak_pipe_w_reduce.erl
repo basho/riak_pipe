@@ -116,7 +116,7 @@ process({Key, Input}, _Last, #state{accs=Accs}=State) ->
             {ok, State#state{accs=dict:store(Key, OutAcc, Accs)}};
         {error, {Type, Error, Trace}} ->
             %%TODO: forward
-            error_logger:error_msg(
+            lager:error(
               "~p:~p reducing:~n   ~P~n   ~P",
               [Type, Error, InAcc, 2, Trace, 5]),
             {ok, State}
@@ -157,7 +157,7 @@ handoff_acc(Key, HandoffAccs, LocalAccs, State) ->
         {ok, OutAcc} ->
             OutAcc;
         {error, {Type, Error, Trace}} ->
-                error_logger:error_msg(
+                lager:error(
                   "~p:~p reducing handoff:~n   ~P~n   ~P",
                   [Type, Error, InAcc, 2, Trace, 5]),
             LocalAccs %% don't completely barf

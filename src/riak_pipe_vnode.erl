@@ -137,7 +137,7 @@ validate_or_exit(Thing, Validator, Msg) ->
     case Validator(Thing) of
         true -> Thing;
         false ->
-            error_logger:error_msg(Msg++"~n   (found ~p)", [Thing]),
+            lager:error(Msg++"~n   (found ~p)", [Thing]),
             exit({invalid_config, {Msg, Thing}})
     end.
 
@@ -448,8 +448,7 @@ handle_command(#cmd_next_input{}=Cmd, _Sender, State) ->
 handle_command(#cmd_status{}=Cmd, _Sender, State) ->
     status_internal(Cmd, State);
 handle_command(Message, _Sender, State) ->
-    error_logger:info_msg("~p:~p Unhandled command:~n~p",
-                          [?MODULE, ?LINE, Message]),
+    lager:info("Unhandled command: ~p", [Message]),
     {noreply, State}.
 
 %% @doc Handle a handoff command.
@@ -725,13 +724,13 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                              blocking=queue:new(),
                              perf=Perf}};
             gone ->
-                error_logger:error_msg(
+                lager:error(
                   "Pipe worker startup failed:"
                   "fitting was gone before startup"),
                 worker_startup_failed
         end
     catch Type:Reason ->
-            error_logger:error_msg(
+            lager:error(
               "Pipe worker startup failed:~n"
               "   ~p:~p~n   ~p",
               [Type, Reason, erlang:get_stacktrace()]),

@@ -169,11 +169,23 @@
 %%      `{log, LogTarget}'
 %%</dt><dd>
 %%      If no `log' option is provided, logging will be disabled for
-%%      this pipelien.  If specified, `LogTarget' should be either the
-%%      atom `sink', in which case all log (and trace) messages will
-%%      be delivered to the sink, or the atom `sasl', in which case
+%%      this pipeline.  If specified, `LogTarget' should be one of the
+%%      following atoms:
+%%   <dl><dt>
+%%      `sink'
+%%   </dt><dd>
+%%      all log (and trace) messages will be delivered to the sink
+%%   </dd><dt>
+%%      `sasl'
+%%   </dt><dd>
 %%      all log (and trace) messages will be printed via
-%%      `error_logger' to the SASL log.
+%%      `error_logger' to the SASL log
+%%   </dd><dt>
+%%      `lager'
+%%   </dt><dd>
+%%      all log (and trace) messages will be printed to the Riak
+%%      node's log via the lager utility
+%%   </dd></dl>
 %%</dd></dl>
 %%
 %%      Other values are allowed, but ignored, in `Options'.  The

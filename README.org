@@ -216,13 +216,14 @@ the pipeline as a whole.  Currently supported options are:
            messages to the process that called
            =riak_pipe:exec/2=.
 
- - log :: =sink= | =sasl= | *=undefined=*
+ - log :: =sink= | =lager= | =sasl= | *=undefined=*
 
           If set to =sink=, log messages will be sent to the sink
           process (just as outputs from the final fitting are).  If
-          set to =sasl=, log messages are printed to the SASL log on
-          whatever node produces them.  If left =undefined=, log
-          messages will be ignored silently.
+          set to =lager=, log messages are printed to the Riak log on
+          whatever node produces them.  If set to =sasl=, log messages
+          are printed to the SASL log on whatever node produces them.
+          If left =undefined=, log messages will be ignored silently.
 
  - trace :: =all= | =[trace_item()]= | *=undefined=*
 
@@ -572,8 +573,8 @@ When the final vnode in the preflist is given the input for
 processing, it's fitting behavior's =process/3= function will have the
 =LastPreflist= parameter set to =true=.  If the final vnode's worker
 again asks to forward the input, an error is logged (either in the
-SASL log, or via a message to the sink, depending on =log= and =trace=
-execution options).
+node's log, or via a message to the sink, depending on =log= and
+=trace= execution options).
 
 This same variety of forwarding is used if a vnode worker should exit
 abnormally, and then fail to restart.  All items in the worker's
@@ -618,10 +619,10 @@ trace will be generated, with ={reason, Reason}= in the proplist
 (where =Reason= is the exit reason received by the worker's vnode).
 
 For these error traces to be visible, two execution options need to be
-set: =log= and =trace=.  The =log= option should be set to =sasl= to
-put these errors in the SASL log, or =sink= to have them delivered to
-the sink.  The =trace= option should be set to at least =[error]=,
-though =all= will also work.
+set: =log= and =trace=.  The =log= option should be set to =lager= to
+put these errors in the node's log, =sasl= to put them in the SASL
+log, or =sink= to have them delivered to the sink.  The =trace= option
+should be set to at least =[error]=, though =all= will also work.
 
 * Included Fittings
 

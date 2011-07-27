@@ -32,8 +32,10 @@
 %%      option passed to {@link riak_pipe:exec/2}.  If the option was
 %%      set to `sink', log messages are sent to the sink.  If the
 %%      option was set to `sasl', log messages are printed via
-%%      `error_logger' to the SASL log.  If no option was given, log
-%%      messages are discarded.
+%%      `error_logger' to the SASL log.  If the option was set to
+%%      `lager', log messages are printed via `lager' to the Riak
+%%      node's log.  If no option was given, log messages are
+%%      discarded.
 -spec log(riak_pipe_fitting:details(), term()) -> ok.
 log(#fitting_details{options=O, name=N}, Msg) ->
     case proplists:get_value(log, O) of
@@ -42,6 +44,10 @@ log(#fitting_details{options=O, name=N}, Msg) ->
         sink ->
             Sink = proplists:get_value(sink, O),
             riak_pipe_sink:log(N, Sink, Msg);
+        lager ->
+            lager:info(
+              "~s: ~P",
+              [riak_pipe_fitting:format_name(N), Msg, 9]);
         sasl ->
             error_logger:info_msg(
               "Pipe log -- ~s:~n~P",

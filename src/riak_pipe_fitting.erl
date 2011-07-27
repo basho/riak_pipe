@@ -436,45 +436,45 @@ validate_fitting(#fitting_spec{name=Name,
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
-            error_logger:error_msg(
-              "Invalid module in fitting spec \"~s\":~n~s",
+            lager:error(
+              "Invalid module in fitting spec \"~s\": ~s",
               [format_name(Name), ModError]),
             throw(badarg)
     end,
     case validate_argument(Module, Arg) of
         ok -> ok;
         {error, ArgError} ->
-            error_logger:error_msg(
-              "Invalid module argument in fitting spec \"~s\":~n~s",
+            lager:error(
+              "Invalid module argument in fitting spec \"~s\": ~s",
               [format_name(Name), ArgError]),
             throw(badarg)
     end,
     case validate_chashfun(HashFun) of
         ok -> ok;
         {error, PFError} ->
-            error_logger:error_msg(
-              "Invalid chashfun in fitting spec \"~s\":~n~s",
+            lager:error(
+              "Invalid chashfun in fitting spec \"~s\": ~s",
               [format_name(Name), PFError]),
             throw(badarg)
     end,
     case validate_nval(NVal) of
         ok -> ok;
         {error, NVError} ->
-            error_logger:error_msg(
-              "Invalid nval in fitting spec \"~s\":~n~s",
+            lager:error(
+              "Invalid nval in fitting spec \"~s\": ~s",
               [format_name(Name), NVError]),
             throw(badarg)
     end,
     case validate_q_limit(QLimit) of
         ok -> ok;
         {error, QLError} ->
-            error_logger:error_msg(
-              "Invalid q_limit in fitting spec \"~s\":~n~s",
+            lager:error(
+              "Invalid q_limit in fitting spec \"~s\": ~s",
               [format_name(Name), QLError]),
-            throw(badard)
+            throw(badarg)
     end;
 validate_fitting(Other) ->
-    error_logger:error_msg(
+    lager:error(
       "Invalid fitting_spec given (expected fitting_spec record):~n~P",
       [Other, 3]),
     throw(badarg).
