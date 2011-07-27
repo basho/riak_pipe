@@ -36,7 +36,8 @@
          handle_handoff_data/2,
          encode_handoff_item/2,
          handle_exit/3,
-         handle_info/2]).
+         handle_info/2,
+         handle_coverage/4]).
 -export([queue_work/2,
          queue_work/3,
          queue_work/4,
@@ -616,6 +617,12 @@ handle_info({'DOWN',_,process,Pid,_}, #state{partition=Partition}=State) ->
 handle_info(_,State) ->
     %% unknown message
     {ok, State}.
+
+%% @doc Coverage is not used in riak_pipe yet.
+-spec handle_coverage(term(), term(), sender(), state()) ->
+         {reply, ok, state()}.
+handle_coverage(_Request, _KeySpaces, _Sender, State) ->
+    {reply, ok, State}.
 
 %% internal
 
