@@ -785,13 +785,13 @@ start_slv(RHS, LHS, NodeName, Extra) ->
 prepare_runtime() ->
     prepare_runtime(default_nodename()).
 
-prepare_runtime(_NodeName) ->
+prepare_runtime(NodeName) ->
      fun() ->
              do_dep_apps(fullstop),
              timer:sleep(5),
              %% Must start epmd/net_kernel before starting apps
              [] = os:cmd("epmd -daemon"),
-             net_kernel:start([_NodeName, shortnames]), 
+             net_kernel:start([NodeName, shortnames]), 
              do_dep_apps(start),
              timer:sleep(5),
              [foo1, foo2]
