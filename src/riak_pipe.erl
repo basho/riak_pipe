@@ -789,7 +789,8 @@ prepare_runtime(_NodeName) ->
      fun() ->
              do_dep_apps(fullstop),
              timer:sleep(5),
-             %% Must start net_kernel before starting apps
+             %% Must start epmd/net_kernel before starting apps
+             [] = os:cmd("epmd -daemon"),
              net_kernel:start([_NodeName, shortnames]), 
              do_dep_apps(start),
              timer:sleep(5),
