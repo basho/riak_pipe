@@ -1553,7 +1553,7 @@ limits_test_() ->
      prepare_runtime(),
      teardown_runtime(),
       [
-       {timeout, 20, 
+       {timeout, 60,
         {"Verify that handoff mechanism does what it is supposed to",
          fun() ->
                  PipeLen = 20,
@@ -1637,6 +1637,7 @@ limits_test_() ->
                  40 = length(_Out2),
 
                  %% VM trace verification
+                 timer:sleep(1000),
                  riak_core_tracer:stop_collect(),
                  Traces = riak_core_tracer:results(),
                  FoldReqs = length([x || {_, riak_core_fold_req_v1} <- Traces]),
