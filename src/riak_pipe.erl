@@ -1598,6 +1598,10 @@ limits_test_() ->
 
                  {ok, Slave0} = start_slave0(),
 
+                 %% We seem to have lots of SMP racing games when
+                 %% using riak_core_tracer.
+                 erlang:system_flag(multi_scheduling, block),
+
                  %% The ?T() macro is a bit annoying here, because we
                  %% need to know the #fitting_details in order to use
                  %% it.  But the tracing that I'd like to do at the
@@ -1622,10 +1626,11 @@ limits_test_() ->
                  riak_core_tracer:collect(5000),
 
                  %% Give slave a chance to start and master to notice it.
-                 timer:sleep(500),
+                 timer:sleep(2000),
 
                  [ok = riak_pipe:queue_work(Pipe2, X) ||
                      X <- lists:seq(121, 140)],
+
                  riak_pipe:eoi(Pipe1),
                  riak_pipe:eoi(Pipe2),
                  {eoi, _Out1, Trace1} = collect_results(Pipe1, 1000),
@@ -1640,6 +1645,8 @@ limits_test_() ->
                  timer:sleep(1000),
                  riak_core_tracer:stop_collect(),
                  Traces = riak_core_tracer:results(),
+                 erlang:system_flag(multi_scheduling, unblock),
+
                  FoldReqs = length([x || {_, riak_core_fold_req_v1} <- Traces]),
                  ?assert(FoldReqs > 0),         % At least 4 ?FOLD_REQ{} ?
                  Archives = length([x || {_, cmd_archive} <- Traces]),
