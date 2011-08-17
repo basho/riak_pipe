@@ -1596,8 +1596,6 @@ limits_test_() ->
                  [ok = riak_pipe:queue_work(Pipe2, X) ||
                      X <- lists:seq(101, 120)],
 
-                 {ok, Slave0} = start_slave0(),
-
                  %% We seem to have lots of SMP racing games when
                  %% using riak_core_tracer.
                  erlang:system_flag(multi_scheduling, block),
@@ -1623,10 +1621,11 @@ limits_test_() ->
                         {riak_pipe_vnode, replace_worker, _Args}}) ->
                            replace_worker
                    end),
-                 riak_core_tracer:collect(5000),
+                 riak_core_tracer:collect(10*1000),
 
                  %% Give slave a chance to start and master to notice it.
-                 timer:sleep(2000),
+                 {ok, Slave0} = start_slave0(),
+                 timer:sleep(5000),
 
                  [ok = riak_pipe:queue_work(Pipe2, X) ||
                      X <- lists:seq(121, 140)],
