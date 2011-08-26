@@ -861,7 +861,15 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
             send_handoff(Worker),
             HandoffWorker = Worker#worker{state={working, handoff},
                                           handoff=undefined},
-            {noreply, replace_worker(HandoffWorker, State)}
+            {noreply, replace_worker(HandoffWorker, State)};
+        none ->
+            %% this next_input request was for a queue that this vnode
+            %% doesn't have.  ignore it.  (one example is if the vnode
+            %% receives a 'DOWN' for a fitting, and cleans up the
+            %% queue for that fitting's worker *after* the worker has
+            %% requested its next input, but before the vnode has
+            %% received that request)
+            {noreply, State}
     end.
 
 %% @doc Handle pulling data off of a worker's queue and sending it to
