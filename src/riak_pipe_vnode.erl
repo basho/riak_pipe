@@ -477,7 +477,8 @@ handle_handoff_command(#cmd_eoi{fitting=F}=Cmd, Sender, State) ->
         none ->
             %% handed off, or never existed: reply done
             %% (let the other node deal with its own eoi)
-            send_done(F)
+            send_done(F),
+            {noreply, State}
     end;
 handle_handoff_command(#cmd_next_input{fitting=F}, _Sender, State) ->
     %% force workers into waiting state so we can ask them to
