@@ -471,7 +471,7 @@ fitting_workers(#fitting{pid=Pid}=Fitting) ->
 %%      fittings on that partition.  The closure over the Ring is a
 %%      way to map over a list without having to fetch the ring
 %%      repeatedly.
--spec worker_status(riak_core_ring:ring())
+-spec worker_status(riak_core_ring:riak_core_ring())
          -> fun( (riak_pipe_vnode:partition(), [#fitting{}])
                  -> [ [{atom(), term()}] ] ).
 worker_status(Ring) ->

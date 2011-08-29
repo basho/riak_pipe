@@ -58,7 +58,8 @@
               chash/0,
               partition/0, %% from riak_core_vnode.hrl
               nval/0,
-              qtimeout/0]).
+              qtimeout/0,
+              qerror/0]).
 -type chashfun() :: fun((term()) -> chash()) | follow | sink.
 -type chash() :: chash:index().
 -type nval() :: pos_integer() | fun((term()) -> pos_integer()).
