@@ -861,7 +861,15 @@ next_input_internal(#cmd_next_input{fitting=Fitting}, State) ->
             send_handoff(Worker),
             HandoffWorker = Worker#worker{state={working, handoff},
                                           handoff=undefined},
-            {noreply, replace_worker(HandoffWorker, State)}
+            {noreply, replace_worker(HandoffWorker, State)};
+        none ->
+            %% this next_input request was for a queue that this vnode
+            %% doesn't have.  ignore it.  (one example is if the vnode
+            %% receives a 'DOWN' for a fitting, and cleans up the
+            %% queue for that fitting's worker *after* the worker has
+            %% requested its next input, but before the vnode has
+            %% received that request)
+            {noreply, State}
     end.
 
 %% @doc Handle pulling data off of a worker's queue and sending it to
@@ -1162,11 +1170,19 @@ handoff_cmd_internal(?FOLD_REQ{foldfun=Fold, acc0=Acc}, Sender,
 %%      archive, so it can be sent to the handoff partner.
 -spec archive_fitting(riak_pipe:fitting(), state()) -> state().
 archive_fitting(F, State) ->
-    {ok, W} = worker_by_fitting(F, State),
-    send_archive(W),
-    CleanState = remove_worker(W, State),
-    CleanState#state{workers_archiving=[W#worker{state={working, archive}}
-                                        |State#state.workers_archiving]}.
+    case worker_by_fitting(F, State) of
+        {ok, W} ->
+            send_archive(W),
+            CleanState = remove_worker(W, State),
+            CleanState#state{
+              workers_archiving=[W#worker{state={working, archive}}
+                                 |State#state.workers_archiving]};
+        none ->
+            %% the requested queue isn't here; the fitting may have
+            %% died, and this next_input request passed its kill in
+            %% flight - just ignore
+            State
+    end.
 
 %% @doc A worker finished archiving, and sent the archive back to the
 %%      vnode.  Evaluate the handoff fold function, and remove the
