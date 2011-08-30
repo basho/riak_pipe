@@ -309,22 +309,27 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
 queue_work_send(#fitting{ref=Ref}=Fitting,
                 Input, Timeout,
                 [{Index,Node}|_]=UsedPreflist) ->
-    {ok, VnodePid} = riak_core_vnode_master:command_return_vnode(
+    try riak_core_vnode_master:command_return_vnode(
       {Index, Node},
       #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
                    usedpreflist=UsedPreflist},
       {raw, Ref, self()},
-      riak_pipe_vnode_master),
-    %% monitor in case the vnode is gone before it
-    %% responds to this request
-    MonRef = erlang:monitor(process, VnodePid),
-    %% block until input confirmed queued, for backpressure
-    receive
-        {Ref, Reply} ->
-            erlang:demonitor(MonRef),
-            Reply;
-         {'DOWN',MonRef,process,VnodePid,Reason} ->
-            {error, {vnode_down, Reason}}
+      riak_pipe_vnode_master) of
+        {ok, VnodePid} ->
+            %% monitor in case the vnode is gone before it
+            %% responds to this request
+            MonRef = erlang:monitor(process, VnodePid),
+            %% block until input confirmed queued, for backpressure
+            receive
+                {Ref, Reply} ->
+                    erlang:demonitor(MonRef),
+                    Reply;
+                {'DOWN',MonRef,process,VnodePid,Reason} ->
+                    {error, {vnode_down, Reason}}
+            end
+    catch exit:{{nodedown, Node}, _GenServerCall} ->
+            %% node died between services check and gen_server:call
+            {error, {nodedown, Node}}
     end.
 
 %% @doc Send end-of-inputs for a fitting to a vnode.  Note: this
