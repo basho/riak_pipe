@@ -47,7 +47,8 @@
 
 -record(state, {options :: riak_pipe:exec_opts(),
                 pipe :: #pipe{},
-                alive :: [{#fitting{}, reference()}]}). % monitor ref
+                alive :: [{#fitting{}, reference()}], % monitor ref
+                sinkmon :: reference()}). % monitor ref
 
 -opaque state() :: #state{}.
 
@@ -94,6 +95,7 @@ pipeline(BuilderPid) ->
          {ok, wait_pipeline_shutdown, state()}.
 init([Spec, Options]) ->
     {sink, #fitting{ref=Ref}=Sink} = lists:keyfind(sink, 1, Options),
+    SinkMon = erlang:monitor(process, Sink#fitting.pid),
     Fittings = start_fittings(Spec, Options),
     NamedFittings = lists:zip(
                       [ N || #fitting_spec{name=N} <- Spec ],
@@ -109,7 +111,8 @@ init([Spec, Options]) ->
     {ok, wait_pipeline_shutdown,
      #state{options=Options,
             pipe=Pipe,
-            alive=Fittings}}.
+            alive=Fittings,
+            sinkmon=SinkMon}}.
 
 %% @doc All fittings have been started, and the builder is just
 %%      monitoring the pipeline (and replying to clients looking
@@ -175,8 +178,23 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
                            StateName,
                            State#state{alive=Rest});
         false ->
-            %% this wasn't meant for us - ignore
-            {next_state, StateName, State}
+            if State#state.sinkmon == Ref,
+               ((State#state.pipe)#pipe.sink)#fitting.pid == Pid ->
+                    %% the sink died - kill the pipe, since it has
+                    %% nowhere to send its output
+
+                    %% There is a slight chance that a sink that
+                    %% handles 'eoi' extremely efficiently could cause
+                    %% this 'DOWN' to arrive before the final fitting
+                    %% 'DOWN', but there is no chance of data loss in
+                    %% that case, only a misleading error
+                    %% message. Reason is included in an attempt to
+                    %% make the error message less misleading.
+                    {stop, {sink_died, Reason}, State};
+               true ->
+                    %% this wasn't meant for us - ignore
+                    {next_state, StateName, State}
+            end
     end;
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
