@@ -1487,6 +1487,35 @@ exception_test_() ->
                        ?assertEqual(0, proplists:get_value(failures,
                                                            RestartStats))
                end}
+      end,
+      fun(_) ->
+              {"Sink death",
+               fun() ->
+                       Spec = [#fitting_spec{name=sink_death_test,
+                                            module=riak_pipe_w_xform,
+                                            arg=fun xform_or_crash/3}],
+                       %% Run pipe #1 of 2: start various pipe app machinery.
+                       %% Otherwise machinery procs will interfere with our
+                       %% counting.
+                       {ok, Pipe1} = riak_pipe:exec(Spec, []),
+                       riak_pipe:queue_work(Pipe1, 100),
+                       riak_pipe:eoi(Pipe1),
+                       timer:sleep(1000),
+                       %% Run pipe #2 of 2: the real work.
+                       BeforeProcs = processes(),
+                       spawn(fun() ->
+                                     {ok, Pipe2} = riak_pipe:exec(Spec, []),
+                                     [riak_pipe:queue_work(Pipe2, N) ||
+                                         N <- lists:seq(50, 60)],
+                                     timer:sleep(500),
+                                     exit((Pipe2#pipe.sink)#fitting.pid,
+                                          please_die_now),
+                                     exit(normal)
+                             end),
+                       timer:sleep(3000),
+                       AfterProcs = processes(),
+                       ?assertEqual(length(BeforeProcs), length(AfterProcs))
+               end}
       end
      ]
     }.
