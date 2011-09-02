@@ -1509,8 +1509,10 @@ exception_test_() ->
                                          N <- lists:seq(50, 60)],
                                      timer:sleep(500),
                                      exit((Pipe2#pipe.sink)#fitting.pid,
-                                          please_die_now),
-                                     exit(normal)
+                                          please_die_now)
+                                     %% Due to the way Spec is written,
+                                     %% this proc _is_ the sink, so we've
+                                     %% just killed ourself.
                              end),
                        timer:sleep(3000),
                        AfterProcs = processes(),
