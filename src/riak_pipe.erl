@@ -60,6 +60,7 @@
          queue_work/2,
          queue_work/3,
          eoi/1,
+         destroy/1,
          status/1,
          active_pipelines/1
         ]).
@@ -362,6 +363,14 @@ collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
             %% but it's useful to have logging output in time order
             {End, ResultAcc, lists:reverse(LogAcc)}
     end.
+
+%% @doc Brutally kill a pipeline.  Use this when it is necessary to
+%%      stop all parts of a pipeline as quickly as possible, instead
+%%      of waiting for an `eoi' to propagate through.
+-spec destroy(pipe()) -> ok.
+destroy(#pipe{builder=Builder}) ->
+    erlang:exit(Builder, kill),
+    ok.
 
 %% @doc Get all active pipelines hosted on `Node'.  Pass the atom
 %%      `global' instead of a node name to get all pipelines hosted on
