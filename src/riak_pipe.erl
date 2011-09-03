@@ -718,7 +718,7 @@ dep_apps() ->
      end,
      %% public_key and ssl are not needed here but started by others so
      %% stop them when we're done.
-     crypto, public_key, ssl,
+     crypto, public_key, ssl, os_mon,
      fun(start) ->
              ok = application:start(riak_sysmon);
         (stop) ->
