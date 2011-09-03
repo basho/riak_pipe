@@ -1655,15 +1655,16 @@ limits_test_() ->
                  Traces = riak_core_tracer:results(),
                  erlang:system_flag(multi_scheduling, unblock),
 
-                 FoldReqs = [X || {_, riak_core_fold_req_v1}=X <- Traces]),
-                 Archives = [X || {_, cmd_archive}=X <- Traces]),
-                 Replaces = [X || {_, replace_worker}=X <- Traces]),
-                 io:format(user, "FoldReqs: ~p\n", [FoldReqs]),
-                 io:format(user, "Archives: ~p\n", [Archives]),
-                 io:format(user, "Replaces: ~p\n", [Replaces]),
-                 ?assert(FoldReqs > 0),         % At least 4 ?FOLD_REQ{} ?
-                 ?assert(Archives > 0),          % At least 67 ?
-                 ?assert(Replaces > 0)          % At least 67 ?
+                 _FoldReqs = [X || {_, riak_core_fold_req_v1}=X <- Traces],
+                 _Archives = [X || {_, cmd_archive}=X <- Traces],
+                 Replaces = [X || {_, replace_worker}=X <- Traces],
+
+                 %% TODO: Occasionally with buildbot: FoldReqs = [] and
+                 %% Archives = [].
+                 %% See http://buildbot-master.den.basho:8010/builders/riak-test-build-centos-55-64/builds/236/steps/shell_3/logs/stdio
+                 %% ?assertMatch([_|_], _FoldReqs), % At least 4 ?FOLD_REQ{} ?
+                 %% ?assertMatch([_|_], Archives),  % At least 67 ?
+                 ?assertMatch([_|_], Replaces)   % At least 67 ?
          end}}
       ]
      }.
