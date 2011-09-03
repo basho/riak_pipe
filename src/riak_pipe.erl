@@ -1655,12 +1655,14 @@ limits_test_() ->
                  Traces = riak_core_tracer:results(),
                  erlang:system_flag(multi_scheduling, unblock),
 
-                 io:format(user, "Traces: ~p\n", [Traces]), %% SLF temp!
-                 FoldReqs = length([x || {_, riak_core_fold_req_v1} <- Traces]),
+                 FoldReqs = [X || {_, riak_core_fold_req_v1}=X <- Traces]),
+                 Archives = [X || {_, cmd_archive}=X <- Traces]),
+                 Replaces = [X || {_, replace_worker}=X <- Traces]),
+                 io:format(user, "FoldReqs: ~p\n", [FoldReqs]),
+                 io:format(user, "Archives: ~p\n", [Archives]),
+                 io:format(user, "Replaces: ~p\n", [Replaces]),
                  ?assert(FoldReqs > 0),         % At least 4 ?FOLD_REQ{} ?
-                 Archives = length([x || {_, cmd_archive} <- Traces]),
                  ?assert(Archives > 0),          % At least 67 ?
-                 Replaces = length([x || {_, replace_worker} <- Traces]),
                  ?assert(Replaces > 0)          % At least 67 ?
          end}}
       ]
