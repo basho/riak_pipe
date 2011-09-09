@@ -624,9 +624,18 @@ handle_info(_,State) ->
     %% unknown message
     {ok, State}.
 
-%% @doc Coverage is not used in riak_pipe yet.
+%% @doc Coverage requests may be used to enqueue identical work on
+%%      multiple vnodes.  `Input' is delivered to the worker as
+%%      `{cover, FilterVNodes, Input}'.
 -spec handle_coverage(term(), term(), sender(), state()) ->
          {reply, ok, state()}.
+handle_coverage({Fitting, Input}, FilterVNodes, Sender,
+                #state{partition=Partition}=State) ->
+    CoverInput = {cover, FilterVNodes, Input},
+    Cmd = #cmd_enqueue{fitting=Fitting, input=CoverInput,
+                       timeout=infinity,
+                       usedpreflist=[{Partition, node()}]},
+    handle_command(Cmd, Sender, State);
 handle_coverage(_Request, _KeySpaces, _Sender, State) ->
     {reply, ok, State}.
 
