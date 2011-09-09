@@ -71,4 +71,7 @@ init([]) ->
     FSup = {riak_pipe_fitting_sup,
             {riak_pipe_fitting_sup, start_link, []},
             permanent, 5000, supervisor, [riak_pipe_fitting_sup]},
-    {ok, { {one_for_one, 5, 10}, [VMaster, BSup, FSup]} }.
+    CSup = {riak_pipe_qcover_sup,
+            {riak_pipe_qcover_sup, start_link, []},
+            permanent, 5000, supervisor, [riak_pipe_qcover_sup]},
+    {ok, { {one_for_one, 5, 10}, [VMaster, BSup, FSup, CSup]} }.
