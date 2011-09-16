@@ -1499,29 +1499,30 @@ validate_test_() ->
       fun(_) ->
               {"very bad fitting",
                fun() ->
-                       badarg = (catch
-                                     riak_pipe_fitting:validate_fitting(x))
+                       % undefined name because it's not a fitting_spec
+                       {badarg, undefined, _Msg} =
+                           (catch riak_pipe_fitting:validate_fitting(x))
                end}
       end,
       fun(_) ->
               {"bad fitting module",
                fun() ->
-                       badarg = (catch
-                                     riak_pipe_fitting:validate_fitting(
-                                       #fitting_spec{name=empty_pass,
-                                                     module=does_not_exist,
-                                                     chashfun=fun zero_part/1}))
+                       {badarg, empty_pass, _Msg} =
+                           (catch riak_pipe_fitting:validate_fitting(
+                                    #fitting_spec{name=empty_pass,
+                                                  module=does_not_exist,
+                                                  chashfun=fun zero_part/1}))
                end}
       end,
       fun(_) ->
               {"bad fitting argument",
                fun() ->
-                       badarg = (catch
-                                     riak_pipe_fitting:validate_fitting(
-                                       #fitting_spec{name=empty_pass,
-                                                     module=riak_pipe_w_reduce,
-                                                     arg=bogus_arg,
-                                                     chashfun=fun zero_part/1}))
+                       {badarg, empty_pass, _Msg} =
+                           (catch riak_pipe_fitting:validate_fitting(
+                                    #fitting_spec{name=empty_pass,
+                                                  module=riak_pipe_w_reduce,
+                                                  arg=bogus_arg,
+                                                  chashfun=fun zero_part/1}))
                end}
       end,
       fun(_) ->
@@ -1537,11 +1538,11 @@ validate_test_() ->
       fun(_) ->
               {"bad partfun",
                fun() ->
-                       badarg = (catch
-                                     riak_pipe_fitting:validate_fitting(
-                                      #fitting_spec{name=empty_pass,
-                                                    module=riak_pipe_w_pass,
-                                                    chashfun=fun(_,_) -> 0 end}))
+                       {badarg, empty_pass, _Msg} =
+                           (catch riak_pipe_fitting:validate_fitting(
+                                    #fitting_spec{name=empty_pass,
+                                                  module=riak_pipe_w_pass,
+                                                  chashfun=fun(_,_) -> 0 end}))
                end}
       end,
       fun(_) ->
