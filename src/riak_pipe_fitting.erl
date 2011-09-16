@@ -425,7 +425,8 @@ worker_by_partpid(Partition, Pid, #state{workers=Workers}) ->
 %%      undefined or a postive integer.
 %%
 %%      If all components are valid, the atom `ok' is returned.  If
-%%      any piece is invalid, `badarg' is thrown.
+%%      any piece is invalid, `{badarg, #fitting_spec.name, ErrorMsg}'
+%%      is thrown.
 -spec validate_fitting(riak_pipe:fitting_spec()) -> ok.
 validate_fitting(#fitting_spec{name=Name,
                                module=Module,
@@ -439,7 +440,7 @@ validate_fitting(#fitting_spec{name=Name,
             lager:error(
               "Invalid module in fitting spec \"~s\": ~s",
               [format_name(Name), ModError]),
-            throw(badarg)
+            throw({badarg, Name, ModError})
     end,
     case validate_argument(Module, Arg) of
         ok -> ok;
@@ -447,7 +448,7 @@ validate_fitting(#fitting_spec{name=Name,
             lager:error(
               "Invalid module argument in fitting spec \"~s\": ~s",
               [format_name(Name), ArgError]),
-            throw(badarg)
+            throw({badarg, Name, ArgError})
     end,
     case validate_chashfun(HashFun) of
         ok -> ok;
@@ -455,7 +456,7 @@ validate_fitting(#fitting_spec{name=Name,
             lager:error(
               "Invalid chashfun in fitting spec \"~s\": ~s",
               [format_name(Name), PFError]),
-            throw(badarg)
+            throw({badarg, Name, PFError})
     end,
     case validate_nval(NVal) of
         ok -> ok;
@@ -463,7 +464,7 @@ validate_fitting(#fitting_spec{name=Name,
             lager:error(
               "Invalid nval in fitting spec \"~s\": ~s",
               [format_name(Name), NVError]),
-            throw(badarg)
+            throw({badarg, Name, NVError})
     end,
     case validate_q_limit(QLimit) of
         ok -> ok;
@@ -471,13 +472,13 @@ validate_fitting(#fitting_spec{name=Name,
             lager:error(
               "Invalid q_limit in fitting spec \"~s\": ~s",
               [format_name(Name), QLError]),
-            throw(badarg)
+            throw({badarg, Name, QLimit})
     end;
 validate_fitting(Other) ->
     lager:error(
       "Invalid fitting_spec given (expected fitting_spec record):~n~P",
       [Other, 3]),
-    throw(badarg).
+    throw({badarg, undefined, "not a fitting_spec record"}).
 
 %% @doc Validate initialization `Arg' for the given `Module' by calling
 %%      `Module:validate_arg(Arg)', if it exists.  This function assumes
