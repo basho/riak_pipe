@@ -108,9 +108,13 @@ get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
 %%      assumes that it is being called from the vnode process, so
 %%      that `self()' can be used to inform the fitting of which
 %%      worker is done.
--spec worker_done(riak_pipe:fitting()) -> ok.
+-spec worker_done(riak_pipe:fitting()) -> ok | gone.
 worker_done(#fitting{pid=Pid, ref=Ref}) ->
-    gen_fsm:sync_send_event(Pid, {done, Ref, self()}).
+    try
+        gen_fsm:sync_send_event(Pid, {done, Ref, self()})
+    catch exit:_ ->
+            gone
+    end.
 
 %% @doc Get the list of ring partition indexes (vnodes) that are doing
 %%      work for this fitting.
