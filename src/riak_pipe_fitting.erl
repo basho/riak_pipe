@@ -110,7 +110,11 @@ get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
 %%      worker is done.
 -spec worker_done(riak_pipe:fitting()) -> ok.
 worker_done(#fitting{pid=Pid, ref=Ref}) ->
-    gen_fsm:sync_send_event(Pid, {done, Ref, self()}).
+    try
+        gen_fsm:sync_send_event(Pid, {done, Ref, self()})
+    catch exit:_ ->
+            gone
+    end.
 
 %% @doc Get the list of ring partition indexes (vnodes) that are doing
 %%      work for this fitting.
