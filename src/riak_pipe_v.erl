@@ -64,8 +64,11 @@ validate_module(Label, Module) ->
 %%      If validation completes successfully, the atom `ok' is
 %%      returned.  If validation failes, an `{error, Reason}' tuple is
 %%      returned.  (`Label' is used in the error message).
--spec validate_function(string(), integer(), fun()) ->
+-spec validate_function(string(), integer(), fun() | {atom(), atom()}) ->
          ok | {error, iolist()}.
+validate_function(Label, Arity, {Module, Function})
+  when is_atom(Module), is_atom(Function) ->
+    validate_exported_function(Label, Arity, Module, Function);
 validate_function(Label, Arity, Fun) when is_function(Fun) ->
     Info = erlang:fun_info(Fun),
     case proplists:get_value(arity, Info) of
@@ -85,8 +88,9 @@ validate_function(Label, Arity, Fun) when is_function(Fun) ->
                                   [Label, Arity, N])}
     end;
 validate_function(Label, Arity, Fun) ->
-    {error, io_lib:format("~s must be a function (arity ~b), not a ~p",
-                          [Label, Arity, type_of(Fun)])}.
+    {error, io_lib:format(
+              "~s must be a function or {Mod, Fun} (arity ~b), not a ~p",
+              [Label, Arity, type_of(Fun)])}.
 
 %% @doc Validate an exported function.  See {@link validate_function/3}.
 -spec validate_exported_function(string(), integer(), atom(), atom()) ->
