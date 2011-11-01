@@ -438,7 +438,8 @@ process_input(Input, UsedPreflist,
                NValInt when is_integer(NValInt) -> NValInt;
                {NValMod, NValFun}               -> NValMod:NValFun(Input);
                %% 1.0.x compatibility
-               NValFun                          -> NValFun(Input)
+               NValFun                          ->
+                   riak_pipe_fun:compat_apply(NValFun, [Input])
            end,
     try
         {Result, NewModState} = Module:process(Input,

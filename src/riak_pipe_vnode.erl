@@ -237,7 +237,8 @@ queue_work(#fitting{chashfun=Hash}=Fitting,
 queue_work(#fitting{chashfun=HashFun}=Fitting,
            Input, Timeout, UsedPreflist) ->
     %% 1.0.x compatibility
-    queue_work(Fitting, Input, Timeout, UsedPreflist, HashFun(Input)).
+    Hash = riak_pipe_fun:compat_apply(HashFun, [Input]),
+    queue_work(Fitting, Input, Timeout, UsedPreflist, Hash).
 
 %% @doc Queue the given `Input' for processing the the `Fitting' on
 %%      the vnode specified by `Hash'.  This version of the function
@@ -305,7 +306,8 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
     IntNVal = if is_integer(NVal)  -> NVal;
                  is_tuple(NVal)    -> {Mod, Fun} = NVal, Mod:Fun(Input);
                  %% 1.0.x compatibility
-                 is_function(NVal) -> NVal(Input)
+                 is_function(NVal) ->
+                      riak_pipe_fun:compat_apply(NVal, [Input])
               end,
     %% it's possible that node availability changes could cause
     %% different vnodes to be available at different evaluations, so
