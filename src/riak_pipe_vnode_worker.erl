@@ -436,6 +436,8 @@ process_input(Input, UsedPreflist,
     Module = FD#fitting_details.module,
     NVal = case (FD#fitting_details.fitting)#fitting.nval of
                NValInt when is_integer(NValInt) -> NValInt;
+               {NValMod, NValFun}               -> NValMod:NValFun(Input);
+               %% 1.0.x compatibility
                NValFun                          -> NValFun(Input)
            end,
     try
