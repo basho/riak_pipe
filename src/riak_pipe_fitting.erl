@@ -502,19 +502,29 @@ validate_argument(Module, Arg) ->
             ok %% don't force modules to validate their args
     end.
 
-%% @doc Validate the consistent hashing function.  This must either be
-%%      the atom `follow', or a valid funtion of arity 1 (see {@link
-%%      riak_pipe_v:validate_function/3}).
+%% @doc Validate the consistent hashing function.  This must be the
+%%      atom `follow', a static hash as a 160-bit binary, or a valid
+%%      funtion of arity 1 (see {@link riak_pipe_v:validate_function/3}).
 -spec validate_chashfun(follow | riak_pipe_vnode:chashfun()) ->
          ok | {error, string()}.
 validate_chashfun(follow) ->
     ok;
+validate_chashfun(Hash) when is_binary(Hash) ->
+    case byte_size(Hash) of
+        20 ->
+            % consistent hashes are 160 bits
+            ok;
+        Other ->
+            {error, io_lib:format(
+                      "expected a 160-bit binary, found ~p bits", [Other])}
+    end;
 validate_chashfun(HashFun) ->
     riak_pipe_v:validate_function("chashfun", 1, HashFun).
 
 %% @doc Validate the nval parameter.  This must either be a positive
 %%      integer, or a function of arity 1 (that produces a positive
-%%      integer).
+%%      integer).  The function may be specified anonymously or as a
+%%      {Mod, Fun} tuple.
 -spec validate_nval(term()) -> ok | {error, string()}.
 validate_nval(NVal) when is_integer(NVal) ->
     if NVal > 0 -> ok;
@@ -524,10 +534,12 @@ validate_nval(NVal) when is_integer(NVal) ->
     end;
 validate_nval(NVal) when is_function(NVal) ->
     riak_pipe_v:validate_function("nval", 1, NVal);
+validate_nval({Mod, Fun}) when is_atom(Mod), is_atom(Fun) ->
+    riak_pipe_v:validate_function("nval", 1, {Mod, Fun});
 validate_nval(NVal) ->
     {error, io_lib:format(
               "expected a positive integer,"
-              " or a function of arity 1; not a ~p",
+              " or a function or {Mod, Fun} of arity 1; not a ~p",
               [riak_pipe_v:type_of(NVal)])}.
 
 %% @doc Validate the q_limit parameter.  This must be a positive integer.
