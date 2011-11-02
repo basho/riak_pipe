@@ -66,7 +66,8 @@ init(Partition, FittingDetails) ->
 -spec process(term(), boolean(), state()) -> {ok, state()}.
 process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     Fun = FittingDetails#fitting_details.arg,
-    ok = Fun(Input, Partition, FittingDetails),
+    ok = riak_pipe_fun:compat_apply(
+           Fun, [Input, Partition, FittingDetails]),
     {ok, State}.
 
 %% @doc Unused.

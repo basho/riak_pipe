@@ -60,9 +60,15 @@
               nval/0,
               qtimeout/0,
               qerror/0]).
--type chashfun() :: fun((term()) -> chash()) | follow | sink.
+-type chashfun() :: {Module :: atom(), Function :: atom()}
+                  | chash()
+                  | follow
+                  | sink
+                  | fun((term()) -> chash()). % 1.0.x compatibility
 -type chash() :: chash:index().
--type nval() :: pos_integer() | fun((term()) -> pos_integer()).
+-type nval() :: pos_integer()
+              | {Module :: atom(), Function :: atom()}
+              | fun((term()) -> pos_integer()). % 1.0.x compatibility
 -type qtimeout() :: noblock | infinity.
 -type qerror() :: worker_limit_reached
                 | worker_startup_failed
@@ -221,9 +227,18 @@ queue_work(#fitting{chashfun=follow}=Fitting,
     %% this should only happen if someone sets up a pipe with
     %% the first fitting as chashfun=follow
     queue_work(Fitting, Input, Timeout, UsedPreflist, any_local_vnode());
+queue_work(#fitting{chashfun={Module, Function}}=Fitting,
+           Input, Timeout, UsedPreflist) ->
+    queue_work(Fitting, Input, Timeout, UsedPreflist,
+               Module:Function(Input));
+queue_work(#fitting{chashfun=Hash}=Fitting,
+           Input, Timeout, UsedPreflist) when not is_function(Hash) ->
+    queue_work(Fitting, Input, Timeout, UsedPreflist, Hash);
 queue_work(#fitting{chashfun=HashFun}=Fitting,
            Input, Timeout, UsedPreflist) ->
-    queue_work(Fitting, Input, Timeout, UsedPreflist, HashFun(Input)).
+    %% 1.0.x compatibility
+    Hash = riak_pipe_fun:compat_apply(HashFun, [Input]),
+    queue_work(Fitting, Input, Timeout, UsedPreflist, Hash).
 
 %% @doc Queue the given `Input' for processing the the `Fitting' on
 %%      the vnode specified by `Hash'.  This version of the function
@@ -289,7 +304,10 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_node_watcher:nodes(riak_pipe),
     IntNVal = if is_integer(NVal)  -> NVal;
-                 is_function(NVal) -> NVal(Input)
+                 is_tuple(NVal)    -> {Mod, Fun} = NVal, Mod:Fun(Input);
+                 %% 1.0.x compatibility
+                 is_function(NVal) ->
+                      riak_pipe_fun:compat_apply(NVal, [Input])
               end,
     %% it's possible that node availability changes could cause
     %% different vnodes to be available at different evaluations, so
