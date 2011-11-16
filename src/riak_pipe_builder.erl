@@ -90,7 +90,13 @@ pipeline(BuilderPid) ->
 %% @doc Shutdown the pipeline built by this builder.
 -spec destroy(pid()) -> ok.
 destroy(BuilderPid) ->
-    gen_fsm:sync_send_event(BuilderPid, destroy, infinity).
+    try
+        gen_fsm:sync_send_event(BuilderPid, destroy, infinity)
+    catch exit:_Reason ->
+            %% the builder exited before the call completed,
+            %% since we were shutting it down anyway, this is ok
+            ok
+    end.
 
 %%%===================================================================
 %%% gen_fsm callbacks
