@@ -30,7 +30,8 @@
 %% API
 -export([start_link/2]).
 -export([fitting_pids/1,
-         pipeline/1]).
+         pipeline/1,
+         destroy/1]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -86,6 +87,11 @@ fitting_pids(Builder) ->
 pipeline(BuilderPid) ->
     gen_fsm:sync_send_event(BuilderPid, pipeline).
 
+%% @doc Shutdown the pipeline built by this builder.
+-spec destroy(pid()) -> ok.
+destroy(BuilderPid) ->
+    gen_fsm:sync_send_event(BuilderPid, destroy, infinity).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -123,14 +129,18 @@ wait_pipeline_shutdown(_Event, State) ->
     {next_state, wait_pipeline_shutdown, State}.
 
 %% @doc A client is asking for the fittings.  Respond.
--spec wait_pipeline_shutdown(pipeline, term(), state()) ->
+-spec wait_pipeline_shutdown(pipeline | destroy, term(), state()) ->
          {reply,
           {ok, #pipe{}},
           wait_pipeline_shutdown,
-          state()}.
+          state()}
+        |{stop, normal, ok, state()}.
 wait_pipeline_shutdown(pipeline, _From, #state{pipe=Pipe}=State) ->
     %% everything is started - reply now
     {reply, {ok, Pipe}, wait_pipeline_shutdown, State};
+wait_pipeline_shutdown(destroy, _From, State) ->
+    %% client asked to shutdown this pipe immediately
+    {stop, normal, ok, State};
 wait_pipeline_shutdown(_, _, State) ->
     %% unknown message - reply {error, unknown} to get rid of it
     {reply, {error, unknown}, wait_pipeline_shutdown, State}.
@@ -217,9 +227,12 @@ maybe_shutdown(Reason, _StateName, State) ->
     %% explode!
     {stop, {fitting_exited_abnormally, Reason}, State}.
 
-%% @doc Unused.
+%% @doc Terminate any fittings that are still alive.
 -spec terminate(term(), atom(), state()) -> ok.
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, _StateName, #state{alive=Alive}) ->
+    %% this is a brutal kill of each fitting, just in case that fitting
+    %% is otherwise swamped with stop/restart messages from its workers
+    [ riak_pipe_fitting_sup:terminate_fitting(F) || {F,_R} <- Alive ],
     ok.
 
 %% @doc Unused.

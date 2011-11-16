@@ -25,7 +25,8 @@
 
 %% API
 -export([start_link/0]).
--export([add_fitting/4]).
+-export([add_fitting/4,
+         terminate_fitting/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -54,6 +55,13 @@ start_link() ->
 add_fitting(Builder, Spec, Output, Options) ->
     ?DPF("Adding fitting for ~p", [Spec]),
     supervisor:start_child(?SERVER, [Builder, Spec, Output, Options]).
+
+%% @doc Terminate a fitting immediately.  Useful for tearing down
+%% pipelines that may be otherwise swamped with messages from
+%% restarting workers.
+-spec terminate_fitting(riak_pipe:fitting()) -> ok | {error, term()}.
+terminate_fitting(#fitting{pid=Pid}) ->
+    supervisor:terminate_child(?SERVER, Pid).
 
 %%%===================================================================
 %%% Supervisor callbacks
