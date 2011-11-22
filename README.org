@@ -58,7 +58,7 @@ process will *block* until the input is added to its queue.
 
 The sizes of queues are limited, so if a worker is particularly slow,
 its queue will reach capacity and workers adding new inputs will block
-until the worker catches us.  This back pressure prevents processes and
+until the worker catches up.  This back pressure prevents processes and
 their mailboxes from growing unboundedly when workers outrun their
 followers.
 
