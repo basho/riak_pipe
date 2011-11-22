@@ -69,7 +69,7 @@ followers.
 The first step in performing an operation on =riak_pipe= is to set up
 the pipeline.  The pipeline is represented by a set of processes, one
 per fitting.  Each fitting process knows the details for the behavior
-of the fitting, as will as the =pid= of the fitting following it and
+of the fitting, as well as the =pid= of the fitting following it and
 the partition choice function for distributing that fitting's inputs.
 
 =riak_pipe= exposes a client interface (see the [[API]] section) for
@@ -77,7 +77,7 @@ starting these fitting processes.  It begins by starting a "builder"
 process, which then starts and monitors each of the fitting processes,
 starting with the final one (so that its =pid= can be passed to its
 predecessor).  When all of the fitting processes have started, a
-structure capturing their details is return to the client.
+structure capturing their details is returned to the client.
 
 ** Send inputs
 
