@@ -369,8 +369,7 @@ collect_results(Pipe, ResultAcc, LogAcc, Timeout) ->
 %%      of waiting for an `eoi' to propagate through.
 -spec destroy(pipe()) -> ok.
 destroy(#pipe{builder=Builder}) ->
-    erlang:exit(Builder, kill),
-    ok.
+    riak_pipe_builder:destroy(Builder).
 
 %% @doc Get all active pipelines hosted on `Node'.  Pass the atom
 %%      `global' instead of a node name to get all pipelines hosted on

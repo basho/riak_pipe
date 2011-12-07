@@ -137,10 +137,8 @@ crash(Pid, Fun) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-%% @doc Initialize the fitting process.  This function links to the
-%%      builder process, so it will tear down if the builder exits
-%%      abnormally (which happens if another fitting exist
-%%      abnormally).
+%% @doc Initialize the fitting process.  This function monitors the
+%%      builder process, so it will tear down if the builder exits.
 -spec init([pid() | riak_pipe:fitting_spec() | riak_pipe:fitting()
             | riak_pipe:exec_opts()]) ->
          {ok, wait_upstream_eoi, state()}.
@@ -159,7 +157,7 @@ init([Builder,
     
     ?T(Details, [], {fitting, init_started}),
 
-    erlang:link(Builder),
+    erlang:monitor(process, Builder),
 
     ?T(Details, [], {fitting, init_finished}),
 
@@ -333,6 +331,11 @@ handle_sync_event(_Event, _From, StateName, State) ->
                   atom(), state()) ->
          {next_state, atom(), state()}
         |{stop, normal, state()}.
+handle_info({'DOWN', _Ref, process, Builder, _Reason},
+            _StateName,
+            #state{builder=Builder}=State) ->
+    %% if the builder exits, stop immediately
+    {stop, normal, State};
 handle_info({'DOWN', Ref, _, _, _}, StateName, State) ->
     case lists:keytake(Ref, #worker.monitor, State#state.workers) of
         {value, Worker, Rest} ->
