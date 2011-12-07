@@ -720,3 +720,10 @@ the same input as the =riak_client:mapred/2= function.  Support is
 currently provided for =map= and =reduce= phases implemented in
 Erlang, specified using the ={qfun, function()}= or ={modfun, Module,
 Function}= syntax.
+
+* Additional Documentation
+
+A diagram recording the supervisor/link/monitor structure of the
+Erlang processes involved in Riak Pipe is included in the file
+=riak_pipe_monitors.dot=.  The comments at the top of that file
+describe how to render it to an image using Graphviz.
