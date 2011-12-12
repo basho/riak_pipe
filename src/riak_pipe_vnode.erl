@@ -622,14 +622,16 @@ handle_exit(Pid, Reason, #state{partition=Partition}=State) ->
 %% @doc Handle a 'DOWN' message from a fitting process. Kill the
 %%      worker associated with that fitting and dispose of its queue.
 -spec handle_info(term(), state()) -> {ok, state()}.
-handle_info({'DOWN',_,process,Pid,_}, #state{partition=Partition}=State) ->
+handle_info({'DOWN',_,process,Pid,_},
+            #state{partition=Partition, worker_sup=WorkerSup}=State) ->
     NewState = case worker_by_fitting_pid(Pid, State) of
                    {ok, Worker} ->
                        ?T(Worker#worker.details, [error],
                           {vnode, {fitting_died, Partition}}),
                        %% if the fitting died, tear down its worker
                        erlang:unlink(Worker#worker.pid),
-                       erlang:exit(Worker#worker.pid, fitting_died),
+                       riak_pipe_vnode_worker_sup:terminate_worker(
+                         WorkerSup, Worker#worker.pid),
                        remove_worker(Worker, State);
                    none ->
                        %% TODO: log this somewhere?

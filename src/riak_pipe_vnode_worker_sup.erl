@@ -26,7 +26,8 @@
 
 %% API
 -export([start_link/2]).
--export([start_worker/2]).
+-export([start_worker/2,
+         terminate_worker/2]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -47,6 +48,11 @@ start_link(Partition, VnodePid) ->
 -spec start_worker(pid(), riak_pipe_fitting:details()) -> {ok, pid()}.
 start_worker(Supervisor, Details) ->
     supervisor:start_child(Supervisor, [Details]).
+
+%% @doc Stop a worker immediately
+-spec terminate_worker(pid(), pid()) -> ok | {error, term()}.
+terminate_worker(Supervisor, WorkerPid) ->
+    supervisor:terminate_child(Supervisor, WorkerPid).
 
 %%%===================================================================
 %%% Supervisor callbacks
