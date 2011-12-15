@@ -47,8 +47,9 @@ start(_StartType, _StartArgs) ->
 
     case riak_pipe_sup:start_link() of
         {ok, Pid} ->
-            riak_core:register_vnode_module(riak_pipe_vnode),
-            riak_core_ring_events:force_sync_update(),
+            riak_core:register(riak_pipe, [
+                {vnode_module, riak_pipe_vnode}
+            ]),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
