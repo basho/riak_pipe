@@ -713,7 +713,8 @@ dep_apps() ->
              ok = application:stop(sasl),
              ok = application:set_env(sasl, sasl_error_logger, erase(old_sasl_l));
         (fullstop) ->
-             _ = application:stop(sasl)
+             _ = application:stop(sasl),
+             _ = application:unload(sasl)
      end,
      %% public_key and ssl are not needed here but started by others so
      %% stop them when we're done.
@@ -725,7 +726,8 @@ dep_apps() ->
              KillDamnFilterProc();
         (fullstop) ->
              _ = application:stop(riak_sysmon),
-             KillDamnFilterProc()
+             KillDamnFilterProc(),
+             _ = application:unload(riak_sysmon)
      end,
      webmachine,
      fun(start) ->
@@ -740,12 +742,14 @@ dep_apps() ->
              %% unit test repeatability.
              os:cmd("rm -rf " ++ RingDir);
         (fullstop) ->
-             _ = application:stop(riak_core)
+             _ = application:stop(riak_core),
+             _ = application:unload(riak_core)
      end,
     riak_pipe].
 
 do_dep_apps(fullstop) ->
-    lists:map(fun(A) when is_atom(A) -> _ = application:stop(A);
+    lists:map(fun(A) when is_atom(A) -> _ = application:stop(A),
+                                        _ = application:unload(A);
                  (F)                 -> F(fullstop)
               end, lists:reverse(dep_apps()));
 do_dep_apps(StartStop) ->
@@ -802,6 +806,7 @@ prepare_runtime(NodeName) ->
              net_kernel:start([NodeName, shortnames]), 
              do_dep_apps(start),
              timer:sleep(5),
+             riak_core:wait_for_service(riak_pipe),
              [foo1, foo2]
      end.
 
