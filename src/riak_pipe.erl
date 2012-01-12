@@ -801,7 +801,7 @@ prepare_runtime(NodeName) ->
              [] = os:cmd("epmd -daemon"),
              net_kernel:start([NodeName, shortnames]), 
              do_dep_apps(start),
-             timer:sleep(5),
+             riak_core:wait_for_service(riak_pipe),
              [foo1, foo2]
      end.
 
