@@ -39,6 +39,17 @@ validate_module(Label, Module) when is_atom(Module) ->
         false ->
             case code:load_file(Module) of
                 {module, Module} -> ok;
+                {error, not_purged} ->
+                    %% In the case where identical pipes are started
+                    %% in parallel on a fresh node, they may race to
+                    %% reach the code:load_file(Module) call, meaning
+                    %% the loser will receive {error, not_purged}
+                    %% while the winner will receive {module,
+                    %% Module}. {error, not_purged} is ok because our
+                    %% goal is only to ensure that the module is
+                    %% loaded so we can verify the arity of the
+                    %% specified function.
+                    ok;
                 {error, Error} ->
                     {error, io_lib:format(
                               "~s must be a valid module name"
