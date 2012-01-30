@@ -39,6 +39,7 @@ validate_module(Label, Module) when is_atom(Module) ->
         false ->
             case code:load_file(Module) of
                 {module, Module} -> ok;
+                {error, not_purged} -> ok;
                 {error, Error} ->
                     {error, io_lib:format(
                               "~s must be a valid module name"
