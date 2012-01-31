@@ -126,7 +126,7 @@ details of the fitting (and monitoring for crashes of those vnodes).
 
 ** Wait for done
 
-When a vnode receives and end-of-inputs message from a fitting, it
+When a vnode receives an end-of-inputs message from a fitting, it
 marks the worker's queue.  When the worker processes the final element
 in the queue (including any that may have been blocking), the vnode
 shuts down the worker, and notifies the fitting process that it has
