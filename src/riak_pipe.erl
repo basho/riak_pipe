@@ -728,6 +728,7 @@ dep_apps() ->
              KillDamnFilterProc()
      end,
      webmachine,
+     lager,
      fun(start) ->
              _ = application:load(riak_core),
              [save_and_set_env(Triple) || Triple <- CoreEnvVars],
