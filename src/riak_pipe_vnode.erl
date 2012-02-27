@@ -484,7 +484,8 @@ handle_handoff_command(?FOLD_REQ{}=Cmd, Sender, State) ->
     handoff_cmd_internal(Cmd, Sender, State);
 handle_handoff_command(#cmd_archive{}=Cmd, _Sender, State) ->
     archive_internal(Cmd, State);
-handle_handoff_command(#cmd_enqueue{fitting=F}=Cmd, Sender, State) ->
+handle_handoff_command(#cmd_enqueue{fitting=F}=Cmd, Sender,
+                       #state{handoff=#handoff{}}=State) ->
     case worker_by_fitting(F, State) of
         {ok, _} ->
             %% not yet handed off: proceed
@@ -493,7 +494,8 @@ handle_handoff_command(#cmd_enqueue{fitting=F}=Cmd, Sender, State) ->
             %% handed off, or never existed: forward
             {forward, State}
     end;
-handle_handoff_command(#cmd_eoi{fitting=F}=Cmd, Sender, State) ->
+handle_handoff_command(#cmd_eoi{fitting=F}=Cmd, Sender,
+                       #state{handoff=#handoff{}}=State) ->
     case worker_by_fitting(F, State) of
         {ok, _} ->
             %% not yet handed off: proceed
@@ -504,7 +506,8 @@ handle_handoff_command(#cmd_eoi{fitting=F}=Cmd, Sender, State) ->
             send_done(F),
             {noreply, State}
     end;
-handle_handoff_command(#cmd_next_input{fitting=F}, _Sender, State) ->
+handle_handoff_command(#cmd_next_input{fitting=F}, _Sender,
+                       #state{handoff=#handoff{}}=State) ->
     %% force workers into waiting state so we can ask them to
     %% prepare for handoff
     {noreply, archive_fitting(F, State)};
