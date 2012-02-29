@@ -44,6 +44,8 @@ log(#fitting_details{options=O, name=N}, Msg) ->
         sink ->
             Sink = proplists:get_value(sink, O),
             riak_pipe_sink:log(N, Sink, Msg);
+        {sink, Sink} ->
+            riak_pipe_sink:log(N, Sink, Msg);
         lager ->
             lager:info(
               "~s: ~P",
