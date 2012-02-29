@@ -65,8 +65,8 @@ process_results(ok, State) ->
     %% this 'done' means that the vnode that sent this reply is done,
     %% not that the entire request is done
     {done, State};
-process_results(Error, State) ->
-    {Error, State}.
+process_results({error, Reason}, _State) ->
+    {error, Reason}.
 
 finish({error, Reason}, #state{from={raw, Ref, Client}}=State) ->
     Client ! {Ref, {error, Reason}},
