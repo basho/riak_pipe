@@ -63,7 +63,8 @@ start_link() ->
                         [ supervisor:child_spec() ]}}.
 init([]) ->
     VMaster = {riak_pipe_vnode_master,
-               {riak_core_vnode_master, start_link, [riak_pipe_vnode]},
+               {riak_core_vnode_master, start_link,
+                [riak_pipe_vnode, undefined, riak_pipe]},
                permanent, 5000, worker, [riak_core_vnode_master]},
     BSup = {riak_pipe_builder_sup,
             {riak_pipe_builder_sup, start_link, []},
