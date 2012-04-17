@@ -199,14 +199,10 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
                     %% the sink died - kill the pipe, since it has
                     %% nowhere to send its output
 
-                    %% There is a slight chance that a sink that
-                    %% handles 'eoi' extremely efficiently could cause
-                    %% this 'DOWN' to arrive before the final fitting
-                    %% 'DOWN', but there is no chance of data loss in
-                    %% that case, only a misleading error
-                    %% message. Reason is included in an attempt to
-                    %% make the error message less misleading.
-                    {stop, {sink_died, Reason}, State};
+                    %% Exit normal here because an abnormal sink exit
+                    %% should have generated its own error log, and a
+                    %% normal sink exit should not generate spam.
+                    {stop, normal, State};
                true ->
                     %% this wasn't meant for us - ignore
                     {next_state, StateName, State}
