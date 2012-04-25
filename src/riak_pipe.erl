@@ -728,6 +728,8 @@ dep_apps() ->
              KillDamnFilterProc()
      end,
      webmachine,
+     syntax_tools,
+     compiler,
      lager,
      fun(start) ->
              _ = application:load(riak_core),
