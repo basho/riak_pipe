@@ -727,6 +727,8 @@ dep_apps() ->
              _ = application:stop(riak_sysmon),
              KillDamnFilterProc()
      end,
+     inets,
+     mochiweb,
      webmachine,
      syntax_tools,
      compiler,
