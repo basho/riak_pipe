@@ -1,5 +1,7 @@
 Riak Pipelines
 
+[[http://travis-ci.org/basho/riak_pipe][Travis-CI]] :: [[https://secure.travis-ci.org/basho/riak_pipe.png]]
+
 * Overview
 
 =riak_pipe= is most simply described as "UNIX pipes for Riak."  In
