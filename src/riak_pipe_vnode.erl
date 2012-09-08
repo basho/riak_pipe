@@ -750,7 +750,7 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
                 erlang:link(Pid),
-                Start = now(),
+                Start = os:timestamp(),
                 Perf = #worker_perf{started=Start, last_time=Start},
                 ?T(Details, [worker], {vnode, {start, P}}),
                 {ok, #worker{pid=Pid,
@@ -792,7 +792,7 @@ new_fwd_worker(FittingDetails,
     {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                   Sup, ForwardDetails),
     erlang:link(Pid),
-    Start = now(),
+    Start = os:timestamp(),
     Perf = #worker_perf{started=Start, last_time=Start},
     ?T(FittingDetails, [fwd_worker], {vnode, {start, P}}),
     {ok, #worker{pid=Pid,
@@ -1149,7 +1149,7 @@ worker_detail(#worker{fitting=Fitting, details=Details,
 %%      should be called while its state is still set to `{working, A}'.
 -spec roll_perf(#worker{}) -> #worker{}.
 roll_perf(#worker{perf=Perf, state=State}=Worker) ->
-    Now = now(),
+    Now = os:timestamp(),
     Duration = timer:now_diff(Now, Perf#worker_perf.last_time),
     TimedPerf = case State of
                     {working,_} ->
@@ -1173,7 +1173,7 @@ inc_fail_perf(#worker{perf=Perf}=Worker) ->
 %%      sharing.
 -spec proplist_perf(#worker{}) -> [{atom(), term()}].
 proplist_perf(#worker{perf=Perf, state=State}) ->
-    SinceLast = timer:now_diff(now(), Perf#worker_perf.last_time),
+    SinceLast = timer:now_diff(os:timestamp(), Perf#worker_perf.last_time),
     {AddWork, AddIdle} = case State of
                              {working, _} -> {SinceLast, 0};
                              _            -> {0, SinceLast}
