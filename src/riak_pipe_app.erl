@@ -25,7 +25,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 %% ===================================================================
 %% Application callbacks
@@ -55,7 +55,14 @@ start(_StartType, _StartArgs) ->
             {error, Reason}
     end.
 
+%% @doc Called on the shutdown path
+prep_stop(_State) ->
+    lager:info("Stopping application riak_pipe - marked service down\n", []),
+    riak_core_node_watcher:service_down(riak_pipe),
+    stopping.
+
 %% @doc Unused.
 -spec stop(term()) -> ok.
 stop(_State) ->
+    lager:info("Stopped  application riak_pipe\n", []),
     ok.
