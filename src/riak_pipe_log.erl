@@ -73,16 +73,24 @@ trace(#fitting_details{options=O, name=N}=FD, Types, Msg) ->
                       {true, all};
                   undefined ->
                       false;
+                  EnabledSet when is_list(EnabledSet) ->
+                      %% ordsets (post 1.2)
+                      find_enabled([N|Types], EnabledSet);
                   EnabledSet ->
-                      MatchSet = sets:from_list([node(),N|Types]),
-                      Intersection = sets:intersection(EnabledSet,
-                                                       MatchSet),
-                      case sets:size(Intersection) of
-                          0 -> false;
-                          _ -> {true, sets:to_list(Intersection)}
-                      end
+                      %% sets (1.2 and earlier)
+                      OS = ordsets:from_list(sets:to_list(EnabledSet)),
+                      find_enabled([N|Types], OS)
               end,
     case TraceOn of
         {true, Traces} -> log(FD, {trace, Traces, Msg});
         false          -> ok
+    end.
+
+-spec find_enabled(list(), ordsets:ordset()) -> {true, list()} | false.
+find_enabled(Types, Enabled) ->
+    MatchSet = ordsets:from_list([node()|Types]),
+    Intersection = ordsets:intersection(Enabled, MatchSet),
+    case Intersection of
+        [] -> false;
+        _ -> {true, Intersection}
     end.

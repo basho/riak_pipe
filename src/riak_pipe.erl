@@ -94,7 +94,7 @@
 -type fitting_spec() :: #fitting_spec{}.
 -type exec_opts() :: [exec_option()].
 -type exec_option() :: {sink, fitting()}
-                     | {trace, all | list() | set()}
+                     | {trace, all | list() | set() | ordsets:ordset()}
                      | {log, sink | sasl}.
 -type stat() :: {atom(), term()}.
 
@@ -232,28 +232,45 @@ ensure_sink(Options) ->
     end.
 
 %% @doc Validate the trace option.  Converts `{trace, list()}' to
-%%      `{trace, set()}' for easier comparison later.
+%%      `{trace, set()}' or `{trace, ordset()}' (as supported by the
+%%      cluster) for easier comparison later.
 -spec correct_trace(exec_opts()) -> exec_opts().
 correct_trace(Options) ->
     case lists:keyfind(trace, 1, Options) of
         {trace, all} ->
             %% nothing to correct
             Options;
-        {trace, List} when is_list(List) ->
-            %% convert trace list to set for comparison later
-            lists:keyreplace(trace, 1, Options,
-                             {trace, sets:from_list(List)});
-        {trace, Tuple} ->
-            case sets:is_set(Tuple) of
-                true ->
-                    %% nothing to correct
-                    Options;
+        {trace, Trace} ->
+            %% convert trace list to [ord]set for comparison later
+            case trace_set(Trace) of
+                {ok, TraceSet} ->
+                    lists:keyreplace(trace, 1, Options,
+                                     {trace, TraceSet});
                 false ->
-                    throw({invalid_trace, "not list or set"})
+                    throw({invalid_trace, "not list or set or ordset"})
             end;
         false ->
             %% nothing to correct
             Options
+    end.
+
+%% @doc Convert a trace list/set/ordset to a set or ordset, as
+%% supported by the cluster.
+trace_set(Trace) when is_list(Trace) ->
+    case riak_core_capability:get({riak_pipe, trace_format}, sets) of
+        ordsets ->
+            %% post-1.2
+            {ok, ordsets:from_list(Trace)};
+        sets ->
+            %% 1.2 and earlier
+            {ok, sets:from_list(Trace)}
+    end;
+trace_set(Trace) ->
+    case sets:is_set(Trace) of
+        true ->
+            trace_set(sets:to_list(Trace));
+        false ->
+            false
     end.
 
 %% @doc Send an end-of-inputs message to the head of the pipe.
