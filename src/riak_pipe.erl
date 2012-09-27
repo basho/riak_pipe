@@ -733,7 +733,6 @@ dep_apps() ->
      syntax_tools,
      compiler,
      lager,
-     folsom,
      fun(start) ->
              _ = application:load(riak_core),
              [save_and_set_env(Triple) || Triple <- CoreEnvVars],
