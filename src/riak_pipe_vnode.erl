@@ -313,12 +313,12 @@ remaining_preflist(Input, Hash, NVal, UsedPreflist) ->
     %% different vnodes to be available at different evaluations, so
     %% we have to check the length of UsedPreflist explicitly, instead
     %% of just expecting to filter all of the elements it contains
-    if length(UsedPreflist) < IntNVal ->
-            Preflist = riak_core_apl:get_apl(Hash, IntNVal, Ring, Nodes),
-            Preflist--UsedPreflist;
-       true ->
-            []
-    end.
+    Preflist = [{Idx, Node} || {{Idx, Node}, _Ann} <-
+                                   riak_core_apl:get_primary_apl(Hash,
+                                                                 IntNVal,
+                                                                 Ring,
+                                                                 Nodes)],
+    Preflist--UsedPreflist.
 
 %% @doc Do the actual sending of the work to the vnode, as well as
 %%      receiving the response.
@@ -329,11 +329,11 @@ queue_work_send(#fitting{ref=Ref}=Fitting,
                 Input, Timeout,
                 [{Index,Node}|_]=UsedPreflist) ->
     try riak_core_vnode_master:command_return_vnode(
-      {Index, Node},
-      #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
-                   usedpreflist=UsedPreflist},
-      {raw, Ref, self()},
-      riak_pipe_vnode_master) of
+          {Index, Node},
+          #cmd_enqueue{fitting=Fitting, input=Input, timeout=Timeout,
+                       usedpreflist=UsedPreflist},
+          {raw, Ref, self()},
+          riak_pipe_vnode_master) of
         {ok, VnodePid} ->
             %% monitor in case the vnode is gone before it
             %% responds to this request
@@ -345,7 +345,9 @@ queue_work_send(#fitting{ref=Ref}=Fitting,
                     Reply;
                 {'DOWN',MonRef,process,VnodePid,Reason} ->
                     {error, {vnode_down, Reason}}
-            end
+            end;
+        {error, timeout} ->
+            {error, {vnode_proxy_timeout, {Index, Node}}}
     catch exit:{{nodedown, Node}, _GenServerCall} ->
             %% node died between services check and gen_server:call
             {error, {nodedown, Node}}
@@ -455,7 +457,7 @@ status(Pid, Fittings) when is_list(Fittings); Fittings =:= all ->
     receive
         {Ref, Reply} -> Reply
     end.
-    
+
 
 %% @doc Handle a vnode command.
 -spec handle_command(term(), sender(), state()) ->
@@ -750,7 +752,7 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                 {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                               Sup, Details),
                 erlang:link(Pid),
-                Start = now(),
+                Start = os:timestamp(),
                 Perf = #worker_perf{started=Start, last_time=Start},
                 ?T(Details, [worker], {vnode, {start, P}}),
                 {ok, #worker{pid=Pid,
@@ -792,7 +794,7 @@ new_fwd_worker(FittingDetails,
     {ok, Pid} = riak_pipe_vnode_worker_sup:start_worker(
                   Sup, ForwardDetails),
     erlang:link(Pid),
-    Start = now(),
+    Start = os:timestamp(),
     Perf = #worker_perf{started=Start, last_time=Start},
     ?T(FittingDetails, [fwd_worker], {vnode, {start, P}}),
     {ok, #worker{pid=Pid,
@@ -932,7 +934,7 @@ next_input_nohandoff(WorkerUnperf, #state{partition=Partition}=State) ->
             send_input(Worker, {Input, UsedPreflist}),
             WorkingWorker = Worker#worker{state={working, Input},
                                           q=NewQ},
-            BlockingWorker = 
+            BlockingWorker =
                 case {queue:len(NewQ) < Worker#worker.q_limit,
                       queue:out(Worker#worker.blocking)} of
                     {true, {{value, {BlockInput, Blocker, BlockUsedPreflist}},
@@ -1149,7 +1151,7 @@ worker_detail(#worker{fitting=Fitting, details=Details,
 %%      should be called while its state is still set to `{working, A}'.
 -spec roll_perf(#worker{}) -> #worker{}.
 roll_perf(#worker{perf=Perf, state=State}=Worker) ->
-    Now = now(),
+    Now = os:timestamp(),
     Duration = timer:now_diff(Now, Perf#worker_perf.last_time),
     TimedPerf = case State of
                     {working,_} ->
@@ -1168,12 +1170,12 @@ roll_perf(#worker{perf=Perf, state=State}=Worker) ->
 inc_fail_perf(#worker{perf=Perf}=Worker) ->
     FailPerf = Perf#worker_perf{failures=1+Perf#worker_perf.failures},
     Worker#worker{perf=FailPerf}.
-    
+
 %% @doc Convert the worker's performance statistics to a proplist, for
 %%      sharing.
 -spec proplist_perf(#worker{}) -> [{atom(), term()}].
 proplist_perf(#worker{perf=Perf, state=State}) ->
-    SinceLast = timer:now_diff(now(), Perf#worker_perf.last_time),
+    SinceLast = timer:now_diff(os:timestamp(), Perf#worker_perf.last_time),
     {AddWork, AddIdle} = case State of
                              {working, _} -> {SinceLast, 0};
                              _            -> {0, SinceLast}
