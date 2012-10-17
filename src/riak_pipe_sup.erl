@@ -62,6 +62,11 @@ start_link() ->
                          pos_integer()},
                         [ supervisor:child_spec() ]}}.
 init([]) ->
+    %% ordsets = enabled traces are represented as ordsets in fitting_details
+    %% sets = '' sets ''
+    riak_core_capability:register(
+      {riak_pipe, trace_format}, [ordsets, sets], sets),
+
     VMaster = {riak_pipe_vnode_master,
                {riak_core_vnode_master, start_link, [riak_pipe_vnode]},
                permanent, 5000, worker, [riak_core_vnode_master]},
