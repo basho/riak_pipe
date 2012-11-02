@@ -94,6 +94,7 @@
 -type fitting_spec() :: #fitting_spec{}.
 -type exec_opts() :: [exec_option()].
 -type exec_option() :: {sink, fitting()}
+                     | {sink_type, riak_pipe_sink:sink_type()}
                      | {trace, all | list() | set() | ordsets:ordset()}
                      | {log, sink | sasl}.
 -type stat() :: {atom(), term()}.
@@ -158,6 +159,16 @@
 %%      sink (all output, logging, and trace messages).  If specified,
 %%      `Sink' should be a `#fitting{}' record, filled with the pid of
 %%      the process prepared to receive these messages.
+%%</dd<dt>
+%%      `{sink_type, Type}'
+%%</dt><dd>
+%%      Specifies the way in which result messages are delivered to
+%%      the sink. If `Type' is the atom `raw', results are delivered
+%%      as plain Erlang messages. If `Type' is the tuple `{fsm_sync,
+%%      Timeout}', results are delivered by calling {@link
+%%      gen_fsm:sync_send_event/3} with the sink's pid, the result
+%%      message, and the specified timeout. If no `sink_type' option
+%%      is provided, `Type' defaults to `raw'.
 %%</dd><dt>
 %%      `{trace, TraceMatches}'
 %%</dt><dd>
@@ -197,7 +208,9 @@
          {ok, Pipe::pipe()}.
 exec(Spec, Options) ->
     [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
-    CorrectOptions = correct_trace(ensure_sink(Options)),
+    CorrectOptions = correct_trace(
+                       validate_sink_type(
+                         ensure_sink(Options))),
     riak_pipe_builder_sup:new_pipeline(Spec, CorrectOptions).
 
 %% @doc Ensure that the `{sink, Sink}' exec/2 option is defined
@@ -229,6 +242,16 @@ ensure_sink(Options) ->
             [{sink, Sink}|Options];
         _ ->
             throw({invalid_sink, not_fitting})
+    end.
+
+%% @doc Make sure that the `sink_type' option is valid, if it is set.
+-spec validate_sink_type(exec_opts()) -> exec_opts().
+validate_sink_type(Options) ->
+    case riak_pipe_sink:valid_sink_type(Options) of
+        true ->
+            Options;
+        {false, Invalid} ->
+            throw({invalid_sink_type, Invalid})
     end.
 
 %% @doc Validate the trace option.  Converts `{trace, list()}' to
@@ -1690,6 +1713,107 @@ limits_test_() ->
          end}}
       ]
      }.
+
+sink_type_test_() ->
+    {foreach,
+     prepare_runtime(),
+     teardown_runtime(),
+     [
+      fun(_) ->
+              {"raw",
+               fun() ->
+                       %% the basics: 'raw' is the default with
+                       %% nothing specified (so all other tests should
+                       %% have covered it), but try specifying it
+                       %% explicitly here
+                       Spec = [#fitting_spec{name=r,
+                                             module=riak_pipe_w_pass}],
+                       {ok, P} = riak_pipe:exec(
+                                   Spec,
+                                   [{sink_type, raw}]),
+                       riak_pipe:queue_work(P, 1),
+                       riak_pipe:eoi(P),
+                       Result = riak_pipe:collect_results(P, 1000),
+                       ?assertEqual({eoi, [{r, 1}], []}, Result)
+               end}
+      end,
+      fun(_) ->
+              {"fsm_sync",
+               fun() ->
+                       %% riak_pipe_test_sink *only* accepts results
+                       %% delivered as gen_fsm sync events
+                       PipeRef = make_ref(),
+                       {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
+                                        PipeRef),
+                       Spec = [#fitting_spec{name=fs,
+                                             module=riak_pipe_w_pass}],
+                       Sink = #fitting{pid=SinkPid, ref=PipeRef},
+                       {ok, P} = riak_pipe:exec(
+                                   Spec,
+                                   [{sink, Sink},
+                                    {sink_type, {fsm_sync, 5000}}]),
+                       riak_pipe:queue_work(P, 1),
+                       riak_pipe:eoi(P),
+                       Result = riak_pipe_test_sink_fsm:get_results(SinkPid),
+                       ?assertEqual({eoi, [{fs, 1}], []}, Result)
+               end}
+      end,
+      fun(_) ->
+              {"fsm_sync timeout",
+               fun() ->
+                       %% purposefully disable acking one output, to
+                       %% trigger the timeout on the
+                       %% gen_fsm:sync_send_event
+                       PipeRef = make_ref(),
+                       SinkOpts = [{skip_ack, [{fst,2}]}],
+                       {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
+                                        PipeRef, SinkOpts),
+                       Spec = [#fitting_spec{name=fst,
+                                             module=riak_pipe_w_pass}],
+                       Sink = #fitting{pid=SinkPid, ref=PipeRef},
+                       {ok, P} = riak_pipe:exec(
+                                   Spec,
+                                   [{log, sink},
+                                    {trace, [error]},
+                                    {sink, Sink},
+                                    %% a very short timeout, to fit eunit
+                                    {sink_type, {fsm_sync, 10}}]),
+                       riak_pipe:queue_work(P, 1),
+                       riak_pipe:queue_work(P, 2),
+                       riak_pipe:queue_work(P, 3),
+                       riak_pipe:eoi(P),
+                       {eoi, Results, Logs} =
+                           riak_pipe_test_sink_fsm:get_results(SinkPid),
+
+                       %% make sure that all results did make it to the sink
+                       ?assertEqual([{fst, 1},{fst, 2},{fst, 3}],
+                                    lists:sort(Results)),
+                       %% but that we also logged an error...
+                       [{fst,{trace,[error],{error,Props}}}] = Logs,
+                       %% ...about the input "2"...
+                       ?assertEqual(2, proplists:get_value(input, Props)),
+                       %% ...timing out on its way to the sink
+                       ?assertEqual({badmatch,{error,timeout}},
+                                    proplists:get_value(error, Props))
+               end}
+      end,
+      fun(_) ->
+              {"invalid",
+               fun() ->
+                       try
+                           Spec = [#fitting_spec{module=riak_pipe_w_pass}],
+                           {ok, P} = riak_pipe:exec(
+                                       Spec,
+                                       [{sink_type, invalid}]),
+                           riak_pipe:destroy(P),
+                           ?assert(false)
+                       catch throw:{invalid_sink_type,
+                                    {sink_type, invalid}} ->
+                               ok
+                       end
+               end}
+      end
+     ]}.
 
 should_be_the_very_last_test() ->
     Leftovers = [{Pid, X} ||
