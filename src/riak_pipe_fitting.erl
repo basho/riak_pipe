@@ -390,7 +390,7 @@ forward_eoi(#state{details=Details}) ->
     ?T(Details, [eoi], {fitting, send_eoi}),
     case Details#fitting_details.output of
         #fitting{chashfun=sink}=Sink ->
-            riak_pipe_sink:eoi(Sink);
+            riak_pipe_sink:eoi(Sink, Details#fitting_details.options);
         #fitting{}=Fitting ->
             riak_pipe_fitting:eoi(Fitting)
     end.

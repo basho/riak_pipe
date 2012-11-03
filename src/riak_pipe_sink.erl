@@ -26,8 +26,8 @@
 
 -export([
          result/4,
-         log/3,
-         eoi/1,
+         log/4,
+         eoi/2,
          valid_sink_type/1
         ]).
 
@@ -51,16 +51,18 @@ result(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Output, Opts) ->
 %% @doc Send a log message to the sink (used by worker processes and
 %%      fittings).  The message is delivered as a `#pipe_log{}' record
 %%      in the sink process's mailbox.
--spec log(term(), Sink::riak_pipe:fitting(), term()) -> #pipe_log{}.
-log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg) ->
-    send_to_sink(Pid, #pipe_log{ref=Ref, from=From, msg=Msg}, raw).
+-spec log(term(), Sink::riak_pipe:fitting(), term(), list()) -> #pipe_log{}.
+log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg, Opts) ->
+    send_to_sink(Pid, #pipe_log{ref=Ref, from=From, msg=Msg},
+                 sink_type(Opts)).
 
 %% @doc Send an end-of-inputs message to the sink (used by fittings).
 %%      The message is delivered as a `#pipe_eoi{}' record in the sink
 %%      process's mailbox.
--spec eoi(Sink::riak_pipe:fitting()) -> #pipe_eoi{}.
-eoi(#fitting{pid=Pid, ref=Ref, chashfun=sink}) ->
-    send_to_sink(Pid, #pipe_eoi{ref=Ref}, raw).
+-spec eoi(Sink::riak_pipe:fitting(), list()) -> #pipe_eoi{}.
+eoi(#fitting{pid=Pid, ref=Ref, chashfun=sink}, Opts) ->
+    send_to_sink(Pid, #pipe_eoi{ref=Ref},
+                 sink_type(Opts)).
 
 %% @doc Learn the type of sink we're dealing with from the execution
 %% options.

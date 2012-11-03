@@ -162,10 +162,10 @@
 %%</dd<dt>
 %%      `{sink_type, Type}'
 %%</dt><dd>
-%%      Specifies the way in which result messages are delivered to
-%%      the sink. If `Type' is the atom `raw', results are delivered
-%%      as plain Erlang messages. If `Type' is the tuple `{fsm_sync,
-%%      Timeout}', results are delivered by calling {@link
+%%      Specifies the way in which messages are delivered to the
+%%      sink. If `Type' is the atom `raw', messages are delivered as
+%%      plain Erlang messages. If `Type' is the tuple `{fsm_sync,
+%%      Timeout}', messages are delivered by calling {@link
 %%      gen_fsm:sync_send_event/3} with the sink's pid, the result
 %%      message, and the specified timeout. If no `sink_type' option
 %%      is provided, `Type' defaults to `raw'.

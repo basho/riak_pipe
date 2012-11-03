@@ -113,6 +113,19 @@ acc(#pipe_result{ref=Ref}=Result, _From, #state{ref=Ref}=State) ->
         false ->
             {reply, ok, acc, NewState}
     end;
+acc(#pipe_log{ref=Ref}=Log, _From, #state{ref=Ref}=State) ->
+    #pipe_log{from=F, msg=M} = Log,
+    #state{logs=Acc} = State,
+    NewState = State#state{logs=[{F,M}|Acc]},
+    {reply, ok, acc, NewState};
+acc(#pipe_eoi{ref=Ref}, _From, #state{ref=Ref}=State) ->
+    case State#state.from of
+        undefined ->
+            {reply, ok, wait, State};
+        From ->
+            gen_fsm:reply(From, results(State)),
+            {stop, normal, ok, State}
+    end;
 acc(get_results, From, State) ->
     {next_state, acc, State#state{from=From}}.
 
@@ -131,18 +144,6 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-handle_info(#pipe_log{ref=Ref}=Log, acc, #state{ref=Ref}=State) ->
-    #pipe_log{from=F, msg=M} = Log,
-    #state{logs=Acc} = State,
-    {next_state, acc, State#state{logs=[{F, M}|Acc]}};
-handle_info(#pipe_eoi{ref=Ref}, acc, #state{ref=Ref}=State) ->
-    case State#state.from of
-        undefined ->
-            {next_state, wait, State};
-        From ->
-            gen_fsm:reply(From, results(State)),
-            {stop, normal, State}
-    end;
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
