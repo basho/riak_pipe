@@ -26,7 +26,7 @@
 %%
 %% The FSM starts out in `acc' simply accumulating results and logs.
 %%
-%% If a `get_results' arrives during live, the FSM stores the `From',
+%% If a `get_results' arrives during `acc', the FSM stores the `From',
 %% and continues accumulating results/logs in `acc'.
 %%
 %% If an `eoi' comes in during `acc' before `get_results', the FSM
