@@ -1,4 +1,4 @@
-%% -------------------------------------------------------------------
+% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2011 Basho Technologies, Inc.
 %%
@@ -59,8 +59,10 @@ new_pipeline(Spec, Options) ->
         {ok, Pid, Ref} ->
             case riak_pipe_builder:pipeline(Pid) of
                 {ok, #pipe{sink=#fitting{ref=Ref}}=Pipe} ->
+                    riak_pipe_stat:update({create, Pid}),
                     {ok, Pipe};
                 _ ->
+                    riak_pipe_stat:update(create_error),
                     {error, startup_failure}
             end;
         Error ->
