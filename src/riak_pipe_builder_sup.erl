@@ -1,4 +1,4 @@
-% -------------------------------------------------------------------
+%% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2011 Basho Technologies, Inc.
 %%
@@ -66,6 +66,7 @@ new_pipeline(Spec, Options) ->
                     {error, startup_failure}
             end;
         Error ->
+            riak_pipe_stat:update(create_error),
             Error
     end.
 
