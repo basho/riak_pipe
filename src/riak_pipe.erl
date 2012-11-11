@@ -165,10 +165,12 @@
 %%      Specifies the way in which messages are delivered to the
 %%      sink. If `Type' is the atom `raw', messages are delivered as
 %%      plain Erlang messages. If `Type' is the tuple `{fsm_sync,
-%%      Timeout}', messages are delivered by calling {@link
-%%      gen_fsm:sync_send_event/3} with the sink's pid, the result
-%%      message, and the specified timeout. If no `sink_type' option
-%%      is provided, `Type' defaults to `raw'.
+%%      Period, Timeout}', messages are delivered by calling {@link
+%%      gen_fsm:send_event/2} `Period` times with the sink's pid and
+%%      the result message, then calling {@link
+%%      gen_fsm:sync_send_event/3} once with the sink's pid, the
+%%      result message, and the specified timeout. If no `sink_type'
+%%      option is provided, `Type' defaults to `raw'.
 %%</dd><dt>
 %%      `{trace, TraceMatches}'
 %%</dt><dd>
@@ -1741,7 +1743,8 @@ sink_type_test_() ->
               {"fsm_sync",
                fun() ->
                        %% riak_pipe_test_sink *only* accepts results
-                       %% delivered as gen_fsm sync events
+                       %% delivered as gen_fsm events that are tagged
+                       %% as sync vs async
                        PipeRef = make_ref(),
                        {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
                                         PipeRef),
@@ -1751,11 +1754,11 @@ sink_type_test_() ->
                        {ok, P} = riak_pipe:exec(
                                    Spec,
                                    [{sink, Sink},
-                                    {sink_type, {fsm_sync, 5000}}]),
-                       riak_pipe:queue_work(P, 1),
+                                    {sink_type, {fsm_sync, 0, 5000}}]),
+                       riak_pipe:queue_work(P, {sync, 1}),
                        riak_pipe:eoi(P),
                        Result = riak_pipe_test_sink_fsm:get_results(SinkPid),
-                       ?assertEqual({eoi, [{fs, 1}], []}, Result)
+                       ?assertEqual({eoi, [{fs, {sync, 1}}], []}, Result)
                end}
       end,
       fun(_) ->
@@ -1765,7 +1768,7 @@ sink_type_test_() ->
                        %% trigger the timeout on the
                        %% gen_fsm:sync_send_event
                        PipeRef = make_ref(),
-                       SinkOpts = [{skip_ack, [{fst,2}]}],
+                       SinkOpts = [{skip_ack, [{fst,{sync, 2}}]}],
                        {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
                                         PipeRef, SinkOpts),
                        Spec = [#fitting_spec{name=fst,
@@ -1777,24 +1780,61 @@ sink_type_test_() ->
                                     {trace, [error]},
                                     {sink, Sink},
                                     %% a very short timeout, to fit eunit
-                                    {sink_type, {fsm_sync, 10}}]),
-                       riak_pipe:queue_work(P, 1),
-                       riak_pipe:queue_work(P, 2),
-                       riak_pipe:queue_work(P, 3),
+                                    {sink_type, {fsm_sync, 0, 10}}]),
+                       riak_pipe:queue_work(P, {sync, 1}),
+                       riak_pipe:queue_work(P, {sync, 2}),
+                       riak_pipe:queue_work(P, {sync, 3}),
                        riak_pipe:eoi(P),
                        {eoi, Results, Logs} =
                            riak_pipe_test_sink_fsm:get_results(SinkPid),
 
                        %% make sure that all results did make it to the sink
-                       ?assertEqual([{fst, 1},{fst, 2},{fst, 3}],
+                       ?assertEqual([{fst, {sync, 1}},
+                                     {fst, {sync, 2}},
+                                     {fst, {sync, 3}}],
                                     lists:sort(Results)),
                        %% but that we also logged an error...
                        [{fst,{trace,[error],{error,Props}}}] = Logs,
                        %% ...about the input "2"...
-                       ?assertEqual(2, proplists:get_value(input, Props)),
+                       ?assertEqual({sync, 2},
+                                    proplists:get_value(input, Props)),
                        %% ...timing out on its way to the sink
                        ?assertEqual({badmatch,{error,timeout}},
                                     proplists:get_value(error, Props))
+               end}
+      end,
+      fun(_) ->
+              {"fsm_sync sync period",
+               fun() ->
+                       %% the same as the timeout test, but the
+                       %% sync period should allow us to send all
+                       %% inputs without waiting for acks
+                       PipeRef = make_ref(),
+                       {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
+                                        PipeRef, []),
+                       ConstantChash = fun(_) -> <<0:160/integer>> end,
+                       Spec = [#fitting_spec{name=fst,
+                                             module=riak_pipe_w_pass,
+                                             chashfun=ConstantChash}],
+                       Sink = #fitting{pid=SinkPid, ref=PipeRef},
+                       {ok, P} = riak_pipe:exec(
+                                   Spec,
+                                   [{log, sink},
+                                    {trace, [error]},
+                                    {sink, Sink},
+                                    {sink_type, {fsm_sync, 2, 1000}}]),
+                       riak_pipe:queue_work(P, {async, 1}),
+                       riak_pipe:queue_work(P, {async, 2}),
+                       riak_pipe:queue_work(P, {sync, 3}),
+                       riak_pipe:eoi(P),
+                       {eoi, Results, []} =
+                           riak_pipe_test_sink_fsm:get_results(SinkPid),
+
+                       %% make sure that all results did make it to the sink
+                       ?assertEqual([{fst, {async, 1}},
+                                     {fst, {async, 2}},
+                                     {fst, {sync, 3}}],
+                                    lists:sort(Results))
                end}
       end,
       fun(_) ->

@@ -35,7 +35,7 @@
 
 -export_type([sink_type/0]).
 -type sink_type() :: raw
-                   | {fsm_sync, Timeout::timeout()}.
+                   | {fsm_sync, Period::integer(), Timeout::timeout()}.
 
 %% @doc Send a result to the sink (used by worker processes).  The
 %%      result is delivered as a `#pipe_result{}' record in the sink
@@ -81,8 +81,9 @@ sink_type(Opts) ->
 -spec valid_sink_type(riak_pipe:exec_opts()) -> true | {false, term()}.
 valid_sink_type(Opts) ->
     case lists:keyfind(sink_type, 1, Opts) of
-        {_, {fsm_sync, Timeout}} when is_integer(Timeout);
-                                      Timeout == infinity ->
+        {_, {fsm_sync, Period, Timeout}}
+          when (is_integer(Period) orelse Period == infinity),
+              (is_integer(Timeout) orelse Timeout == infinity) ->
             true;
         %% other types as needed (fsm_async, for example) can go here
         {_, raw} ->
@@ -101,12 +102,26 @@ valid_sink_type(Opts) ->
 send_to_sink(Pid, Msg, raw) ->
     Pid ! Msg,
     ok;
-send_to_sink(Pid, Msg, {fsm_sync, Timeout}) ->
+send_to_sink(Pid, Msg, {fsm_sync, Period, Timeout}) ->
+    case get(sink_sync) of
+        undefined ->
+            send_to_sink_fsm(Pid, Msg, Timeout, 0 >= Period, 0);
+        Count ->
+            %% integer is never > than atom, so X is not > 'infinity'
+            send_to_sink_fsm(Pid, Msg, Timeout, Count >= Period, Count)
+    end.
+
+send_to_sink_fsm(Pid, Msg, _Timeout, false, Count) ->
+    gen_fsm:send_event(Pid, Msg),
+    put(sink_sync, Count+1),
+    ok;
+send_to_sink_fsm(Pid, Msg, Timeout, true, _Count) ->
     try
         gen_fsm:sync_send_event(Pid, Msg, Timeout),
+        put(sink_sync, 0),
         ok
     catch
         exit:{timeout,_} -> {error, timeout};
         exit:{noproc,_}  -> {error, sink_died}
     end.
-%% other types as needed (fsm_async, for example) can go here
+

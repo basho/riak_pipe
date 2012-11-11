@@ -100,23 +100,47 @@ init([PipeRef, Opts]) ->
 %% ACC: just accumulating
 %%   - #pipe_eoi{} -> eoi
 %%   - get_results -> respond
+acc(#pipe_result{ref=Ref}=Result, #state{ref=Ref}=State) ->
+    NewState = add(Result, State, async),
+    {next_state, acc, NewState};
+acc(#pipe_log{ref=Ref}=Result, #state{ref=Ref}=State) ->
+    NewState = add(Result, State, async),
+    {next_state, acc, NewState};
+acc(#pipe_eoi{ref=Ref}, #state{ref=Ref}=State) ->
+    case State#state.from of
+        undefined ->
+            {next_state, wait, State};
+        From ->
+            gen_fsm:reply(From, results(State)),
+            {stop, normal, State}
+    end;
 acc(_, State) ->
     {next_state, acc, State}.
 
+add(#pipe_result{from=F, result={Type, _}=R},
+    #state{results=Acc}=State,
+    Type) ->
+    State#state{results=[{F, R}|Acc]};
+add(#pipe_result{from=F, result=R},
+    #state{logs=Acc}=State,
+    Type) ->
+    Msg = {wrong_type, [{expected, Type},
+                        {received, R}]},
+    State#state{logs=[{F, Msg}|Acc]};
+add(#pipe_log{from=F, msg=M}, #state{logs=Acc}=State, _Type) ->
+    State#state{logs=[{F,M}|Acc]}.
+
 acc(#pipe_result{ref=Ref}=Result, _From, #state{ref=Ref}=State) ->
+    NewState = add(Result, State, sync),
     #pipe_result{from=F, result=R} = Result,
-    #state{results=Acc} = State,
-    NewState = State#state{results=[{F, R}|Acc]},
-    case should_skip_ack(F, R, State) of
+    case should_skip_ack(F, R, NewState) of
         true ->
             {next_state, acc, NewState};
         false ->
             {reply, ok, acc, NewState}
     end;
 acc(#pipe_log{ref=Ref}=Log, _From, #state{ref=Ref}=State) ->
-    #pipe_log{from=F, msg=M} = Log,
-    #state{logs=Acc} = State,
-    NewState = State#state{logs=[{F,M}|Acc]},
+    NewState = add(Log, State, sync),
     {reply, ok, acc, NewState};
 acc(#pipe_eoi{ref=Ref}, _From, #state{ref=Ref}=State) ->
     case State#state.from of
