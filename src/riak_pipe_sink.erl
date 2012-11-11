@@ -105,7 +105,10 @@ send_to_sink(Pid, Msg, raw) ->
 send_to_sink(Pid, Msg, {fsm_sync, Period, Timeout}) ->
     case get(sink_sync) of
         undefined ->
-            send_to_sink_fsm(Pid, Msg, Timeout, 0 >= Period, 0);
+            %% never sync for an 'infinity' Period, but always sync
+            %% first send for any other Period, to prevent worker
+            %% restart from overwhelming the sink
+            send_to_sink_fsm(Pid, Msg, Timeout, Period /= infinity, 0);
         Count ->
             %% integer is never > than atom, so X is not > 'infinity'
             send_to_sink_fsm(Pid, Msg, Timeout, Count >= Period, Count)

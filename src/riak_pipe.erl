@@ -1806,12 +1806,14 @@ sink_type_test_() ->
       fun(_) ->
               {"fsm_sync sync period",
                fun() ->
-                       %% the same as the timeout test, but the
-                       %% sync period should allow us to send all
-                       %% inputs without waiting for acks
+                       %% make sure that the sink messages are sent
+                       %% synchronously on the Period, and
+                       %% asynchronously otherwise
                        PipeRef = make_ref(),
                        {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
                                         PipeRef, []),
+                       %% force a single worker, to make it easy to
+                       %% test the sync period
                        ConstantChash = fun(_) -> <<0:160/integer>> end,
                        Spec = [#fitting_spec{name=fst,
                                              module=riak_pipe_w_pass,
@@ -1823,9 +1825,48 @@ sink_type_test_() ->
                                     {trace, [error]},
                                     {sink, Sink},
                                     {sink_type, {fsm_sync, 2, 1000}}]),
+                       riak_pipe:queue_work(P, {sync, 1}),
+                       riak_pipe:queue_work(P, {async, 2}),
+                       riak_pipe:queue_work(P, {async, 3}),
+                       riak_pipe:queue_work(P, {sync, 4}),
+                       riak_pipe:eoi(P),
+                       {eoi, Results, []} =
+                           riak_pipe_test_sink_fsm:get_results(SinkPid),
+
+                       %% make sure that all results did make it to the sink
+                       %% ('async' sorts before 'sync')
+                       ?assertEqual([{fst, {async, 2}},
+                                     {fst, {async, 3}},
+                                     {fst, {sync, 1}},
+                                     {fst, {sync, 4}}],
+                                    lists:sort(Results))
+               end}
+      end,
+      fun(_) ->
+              {"fsm_sync infinity sync period",
+               fun() ->
+                       %% infinite period means sink results are
+                       %% always delivered asynchronously
+                       PipeRef = make_ref(),
+                       {ok, SinkPid} = riak_pipe_test_sink_fsm:start_link(
+                                        PipeRef, []),
+                       %% force a single worker, to make it easy to
+                       %% test the sync period
+                       ConstantChash = fun(_) -> <<0:160/integer>> end,
+                       Spec = [#fitting_spec{name=fst,
+                                             module=riak_pipe_w_pass,
+                                             chashfun=ConstantChash}],
+                       Sink = #fitting{pid=SinkPid, ref=PipeRef},
+                       {ok, P} = riak_pipe:exec(
+                                   Spec,
+                                   [{log, sink},
+                                    {trace, [error]},
+                                    {sink, Sink},
+                                    {sink_type, {fsm_sync, infinity, 1000}}]),
                        riak_pipe:queue_work(P, {async, 1}),
                        riak_pipe:queue_work(P, {async, 2}),
-                       riak_pipe:queue_work(P, {sync, 3}),
+                       riak_pipe:queue_work(P, {async, 3}),
+                       riak_pipe:queue_work(P, {async, 4}),
                        riak_pipe:eoi(P),
                        {eoi, Results, []} =
                            riak_pipe_test_sink_fsm:get_results(SinkPid),
@@ -1833,7 +1874,8 @@ sink_type_test_() ->
                        %% make sure that all results did make it to the sink
                        ?assertEqual([{fst, {async, 1}},
                                      {fst, {async, 2}},
-                                     {fst, {sync, 3}}],
+                                     {fst, {async, 3}},
+                                     {fst, {async, 4}}],
                                     lists:sort(Results))
                end}
       end,
