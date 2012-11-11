@@ -35,7 +35,7 @@
 
 -export_type([sink_type/0]).
 -type sink_type() :: raw
-                   | {fsm_sync, Period::integer(), Timeout::timeout()}.
+                   | {fsm, Period::integer(), Timeout::timeout()}.
 
 %% @doc Send a result to the sink (used by worker processes).  The
 %%      result is delivered as a `#pipe_result{}' record in the sink
@@ -81,7 +81,7 @@ sink_type(Opts) ->
 -spec valid_sink_type(riak_pipe:exec_opts()) -> true | {false, term()}.
 valid_sink_type(Opts) ->
     case lists:keyfind(sink_type, 1, Opts) of
-        {_, {fsm_sync, Period, Timeout}}
+        {_, {fsm, Period, Timeout}}
           when (is_integer(Period) orelse Period == infinity),
               (is_integer(Timeout) orelse Timeout == infinity) ->
             true;
@@ -102,7 +102,7 @@ valid_sink_type(Opts) ->
 send_to_sink(Pid, Msg, raw) ->
     Pid ! Msg,
     ok;
-send_to_sink(Pid, Msg, {fsm_sync, Period, Timeout}) ->
+send_to_sink(Pid, Msg, {fsm, Period, Timeout}) ->
     case get(sink_sync) of
         undefined ->
             %% never sync for an 'infinity' Period, but always sync

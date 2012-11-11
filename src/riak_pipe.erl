@@ -164,13 +164,20 @@
 %%</dt><dd>
 %%      Specifies the way in which messages are delivered to the
 %%      sink. If `Type' is the atom `raw', messages are delivered as
-%%      plain Erlang messages. If `Type' is the tuple `{fsm_sync,
+%%      plain Erlang messages. If `Type' is the tuple `{fsm,
 %%      Period, Timeout}', messages are delivered by calling {@link
 %%      gen_fsm:send_event/2} `Period` times with the sink's pid and
 %%      the result message, then calling {@link
 %%      gen_fsm:sync_send_event/3} once with the sink's pid, the
 %%      result message, and the specified timeout. If no `sink_type'
 %%      option is provided, `Type' defaults to `raw'.
+%%
+%%      Some simple `fsm' period examples: `{fsm, 0, T}` will send
+%%      every message synchronously, `{fsm, infinity, T}` will send
+%%      every message asynchronously, `{fsm, 1, T}` will alternate
+%%      every message, `{fsm, 10, T}` sends ten messages
+%%      asynchronously then one synchronously. For every period except
+%%      `infinity' the first message is always sent synchrounously.
 %%</dd><dt>
 %%      `{trace, TraceMatches}'
 %%</dt><dd>
@@ -1740,7 +1747,7 @@ sink_type_test_() ->
                end}
       end,
       fun(_) ->
-              {"fsm_sync",
+              {"fsm",
                fun() ->
                        %% riak_pipe_test_sink *only* accepts results
                        %% delivered as gen_fsm events that are tagged
@@ -1754,7 +1761,7 @@ sink_type_test_() ->
                        {ok, P} = riak_pipe:exec(
                                    Spec,
                                    [{sink, Sink},
-                                    {sink_type, {fsm_sync, 0, 5000}}]),
+                                    {sink_type, {fsm, 0, 5000}}]),
                        riak_pipe:queue_work(P, {sync, 1}),
                        riak_pipe:eoi(P),
                        Result = riak_pipe_test_sink_fsm:get_results(SinkPid),
@@ -1762,7 +1769,7 @@ sink_type_test_() ->
                end}
       end,
       fun(_) ->
-              {"fsm_sync timeout",
+              {"fsm timeout",
                fun() ->
                        %% purposefully disable acking one output, to
                        %% trigger the timeout on the
@@ -1780,7 +1787,7 @@ sink_type_test_() ->
                                     {trace, [error]},
                                     {sink, Sink},
                                     %% a very short timeout, to fit eunit
-                                    {sink_type, {fsm_sync, 0, 10}}]),
+                                    {sink_type, {fsm, 0, 10}}]),
                        riak_pipe:queue_work(P, {sync, 1}),
                        riak_pipe:queue_work(P, {sync, 2}),
                        riak_pipe:queue_work(P, {sync, 3}),
@@ -1804,7 +1811,7 @@ sink_type_test_() ->
                end}
       end,
       fun(_) ->
-              {"fsm_sync sync period",
+              {"fsm sync period",
                fun() ->
                        %% make sure that the sink messages are sent
                        %% synchronously on the Period, and
@@ -1824,7 +1831,7 @@ sink_type_test_() ->
                                    [{log, sink},
                                     {trace, [error]},
                                     {sink, Sink},
-                                    {sink_type, {fsm_sync, 2, 1000}}]),
+                                    {sink_type, {fsm, 2, 1000}}]),
                        riak_pipe:queue_work(P, {sync, 1}),
                        riak_pipe:queue_work(P, {async, 2}),
                        riak_pipe:queue_work(P, {async, 3}),
@@ -1843,7 +1850,7 @@ sink_type_test_() ->
                end}
       end,
       fun(_) ->
-              {"fsm_sync infinity sync period",
+              {"fsm infinity sync period",
                fun() ->
                        %% infinite period means sink results are
                        %% always delivered asynchronously
@@ -1862,7 +1869,7 @@ sink_type_test_() ->
                                    [{log, sink},
                                     {trace, [error]},
                                     {sink, Sink},
-                                    {sink_type, {fsm_sync, infinity, 1000}}]),
+                                    {sink_type, {fsm, infinity, 1000}}]),
                        riak_pipe:queue_work(P, {async, 1}),
                        riak_pipe:queue_work(P, {async, 2}),
                        riak_pipe:queue_work(P, {async, 3}),
