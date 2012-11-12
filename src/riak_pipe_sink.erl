@@ -25,30 +25,106 @@
 -module(riak_pipe_sink).
 
 -export([
-         result/3,
-         log/3,
-         eoi/1
+         result/4,
+         log/4,
+         eoi/2,
+         valid_sink_type/1
         ]).
 
 -include("riak_pipe.hrl").
 
+-export_type([sink_type/0]).
+-type sink_type() :: raw
+                   | {fsm, Period::integer(), Timeout::timeout()}.
+
 %% @doc Send a result to the sink (used by worker processes).  The
 %%      result is delivered as a `#pipe_result{}' record in the sink
 %%      process's mailbox.
--spec result(term(), Sink::riak_pipe:fitting(), term()) -> #pipe_result{}.
-result(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Output) ->
-    Pid ! #pipe_result{ref=Ref, from=From, result=Output}.
+-spec result(term(), Sink::riak_pipe:fitting(), term(),
+             riak_pipe:exec_opts()) ->
+         ok.
+result(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Output, Opts) ->
+    send_to_sink(Pid,
+                 #pipe_result{ref=Ref, from=From, result=Output},
+                 sink_type(Opts)).
 
 %% @doc Send a log message to the sink (used by worker processes and
 %%      fittings).  The message is delivered as a `#pipe_log{}' record
 %%      in the sink process's mailbox.
--spec log(term(), Sink::riak_pipe:fitting(), term()) -> #pipe_log{}.
-log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg) ->
-    Pid ! #pipe_log{ref=Ref, from=From, msg=Msg}.
+-spec log(term(), Sink::riak_pipe:fitting(), term(), list()) -> #pipe_log{}.
+log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg, Opts) ->
+    send_to_sink(Pid, #pipe_log{ref=Ref, from=From, msg=Msg},
+                 sink_type(Opts)).
 
 %% @doc Send an end-of-inputs message to the sink (used by fittings).
 %%      The message is delivered as a `#pipe_eoi{}' record in the sink
 %%      process's mailbox.
--spec eoi(Sink::riak_pipe:fitting()) -> #pipe_eoi{}.
-eoi(#fitting{pid=Pid, ref=Ref, chashfun=sink}) ->
-    Pid ! #pipe_eoi{ref=Ref}.
+-spec eoi(Sink::riak_pipe:fitting(), list()) -> #pipe_eoi{}.
+eoi(#fitting{pid=Pid, ref=Ref, chashfun=sink}, Opts) ->
+    send_to_sink(Pid, #pipe_eoi{ref=Ref},
+                 sink_type(Opts)).
+
+%% @doc Learn the type of sink we're dealing with from the execution
+%% options.
+-spec sink_type(riak_pipe:exec_opts()) -> sink_type().
+sink_type(Opts) ->
+    case lists:keyfind(sink_type, 1, Opts) of
+        {_, Type} ->
+            Type;
+        false ->
+            raw
+    end.
+
+%% @doc Validate the type of sink given in the execution
+%% options. Returns `true' if the type is valid, or `{false, Type}' if
+%% invalid, where `Type' is what was found.
+-spec valid_sink_type(riak_pipe:exec_opts()) -> true | {false, term()}.
+valid_sink_type(Opts) ->
+    case lists:keyfind(sink_type, 1, Opts) of
+        {_, {fsm, Period, Timeout}}
+          when (is_integer(Period) orelse Period == infinity),
+              (is_integer(Timeout) orelse Timeout == infinity) ->
+            true;
+        %% other types as needed (fsm_async, for example) can go here
+        {_, raw} ->
+            true;
+        false ->
+            true;
+        Other ->
+            {false, Other}
+    end.
+
+%% @doc Do the right kind of communication, given the sink type.
+-spec send_to_sink(pid(),
+                   #pipe_result{} | #pipe_log{} | #pipe_eoi{},
+                   sink_type()) ->
+         ok | {error, term()}.
+send_to_sink(Pid, Msg, raw) ->
+    Pid ! Msg,
+    ok;
+send_to_sink(Pid, Msg, {fsm, Period, Timeout}) ->
+    case get(sink_sync) of
+        undefined ->
+            %% never sync for an 'infinity' Period, but always sync
+            %% first send for any other Period, to prevent worker
+            %% restart from overwhelming the sink
+            send_to_sink_fsm(Pid, Msg, Timeout, Period /= infinity, 0);
+        Count ->
+            %% integer is never > than atom, so X is not > 'infinity'
+            send_to_sink_fsm(Pid, Msg, Timeout, Count >= Period, Count)
+    end.
+
+send_to_sink_fsm(Pid, Msg, _Timeout, false, Count) ->
+    gen_fsm:send_event(Pid, Msg),
+    put(sink_sync, Count+1),
+    ok;
+send_to_sink_fsm(Pid, Msg, Timeout, true, _Count) ->
+    try
+        gen_fsm:sync_send_event(Pid, Msg, Timeout),
+        put(sink_sync, 0),
+        ok
+    catch
+        exit:{timeout,_} -> {error, timeout};
+        exit:{noproc,_}  -> {error, sink_died}
+    end.
+

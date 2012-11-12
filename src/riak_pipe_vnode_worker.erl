@@ -287,13 +287,12 @@ send_output(Output, FromPartition, Details, FittingOverride, Timeout) ->
                   riak_core_apl:preflist()) ->
          ok | {error, term()}.
 send_output(Output, FromPartition,
-            #fitting_details{name=Name}=_Details,
+            #fitting_details{name=Name, options=Opts}=_Details,
             FittingOverride,
             Timeout, UsedPreflist) ->
     case FittingOverride#fitting.chashfun of
         sink ->
-            riak_pipe_sink:result(Name, FittingOverride, Output),
-            ok;
+            riak_pipe_sink:result(Name, FittingOverride, Output, Opts);
         follow ->
             %% TODO: should 'follow' use the original preflist (in
             %%       case of failover)?

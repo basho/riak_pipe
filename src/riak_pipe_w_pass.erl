@@ -55,7 +55,7 @@ process(Input, _Last, #state{p=Partition, fd=FD}=State) ->
             {ok, State};
        true ->
             ?T(FD, [], {processing, Input}),
-            riak_pipe_vnode_worker:send_output(Input, Partition, FD),
+            ok = riak_pipe_vnode_worker:send_output(Input, Partition, FD),
             ?T(FD, [], {processed, Input}),
             {ok, State}
     end.
