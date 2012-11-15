@@ -48,7 +48,8 @@ start(_StartType, _StartArgs) ->
     case riak_pipe_sup:start_link() of
         {ok, Pid} ->
             riak_core:register(riak_pipe, [
-                {vnode_module, riak_pipe_vnode}
+                {vnode_module, riak_pipe_vnode},
+                {stat_mod, riak_pipe_stat}
             ]),
             {ok, Pid};
         {error, Reason} ->
