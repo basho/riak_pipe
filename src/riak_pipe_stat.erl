@@ -36,6 +36,8 @@
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
 
+-type stat_type() :: counter | spiral.
+
 %% -------------------------------------------------------------------
 %% API
 %% -------------------------------------------------------------------
@@ -104,6 +106,7 @@ do_update(destroy) ->
 %% -------------------------------------------------------------------
 %% Private
 %% -------------------------------------------------------------------
+-spec stats() -> [{riak_core_stat_q:path(), stat_type()}].
 stats() ->
     [
      {[pipeline, create], spiral},
@@ -111,11 +114,12 @@ stats() ->
      {[pipeline, active], counter}
     ].
 
+-spec stat_name(riak_core_stat_q:path()) -> riak_core_stat_q:stat_name().
 stat_name(Name) when is_list(Name) ->
-    list_to_tuple([?APP] ++ Name);
-stat_name(Name) when is_atom(Name) ->
-    {?APP, Name}.
+    list_to_tuple([?APP] ++ Name).
 
+-spec register_stat(riak_core_stat_q:stat_name(), stat_type()) -> 
+         ok | {error, Subject :: term(), Reason :: term()}.
 register_stat(Name, spiral) ->
     folsom_metrics:new_spiral(Name);
 register_stat(Name, counter) ->

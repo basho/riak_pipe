@@ -42,7 +42,7 @@
 %%      process's mailbox.
 -spec result(term(), Sink::riak_pipe:fitting(), term(),
              riak_pipe:exec_opts()) ->
-         ok.
+         ok | {error, term()}.
 result(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Output, Opts) ->
     send_to_sink(Pid,
                  #pipe_result{ref=Ref, from=From, result=Output},
@@ -51,7 +51,8 @@ result(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Output, Opts) ->
 %% @doc Send a log message to the sink (used by worker processes and
 %%      fittings).  The message is delivered as a `#pipe_log{}' record
 %%      in the sink process's mailbox.
--spec log(term(), Sink::riak_pipe:fitting(), term(), list()) -> #pipe_log{}.
+-spec log(term(), Sink::riak_pipe:fitting(), term(), list()) ->
+         ok | {error, term()}.
 log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg, Opts) ->
     send_to_sink(Pid, #pipe_log{ref=Ref, from=From, msg=Msg},
                  sink_type(Opts)).
@@ -59,7 +60,8 @@ log(From, #fitting{pid=Pid, ref=Ref, chashfun=sink}, Msg, Opts) ->
 %% @doc Send an end-of-inputs message to the sink (used by fittings).
 %%      The message is delivered as a `#pipe_eoi{}' record in the sink
 %%      process's mailbox.
--spec eoi(Sink::riak_pipe:fitting(), list()) -> #pipe_eoi{}.
+-spec eoi(Sink::riak_pipe:fitting(), list()) ->
+         ok | {error, term()}.
 eoi(#fitting{pid=Pid, ref=Ref, chashfun=sink}, Opts) ->
     send_to_sink(Pid, #pipe_eoi{ref=Ref},
                  sink_type(Opts)).
