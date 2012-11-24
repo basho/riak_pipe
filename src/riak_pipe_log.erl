@@ -27,6 +27,11 @@
 
 -include("riak_pipe.hrl").
 
+-export_type([trace_filter/0]).
+
+-type trace_filter() :: all | set() | trace_compiled().
+-type trace_compiled() :: ordsets:ordset(term()).
+
 %% @doc Log the given message, if logging is enabled, to the specified
 %%      log target.  Logging is enabled and directed via the `log'
 %%      option passed to {@link riak_pipe:exec/2}.  If the option was
@@ -86,7 +91,8 @@ trace(#fitting_details{options=O, name=N}=FD, Types, Msg) ->
         false          -> ok
     end.
 
--spec find_enabled(list(), ordsets:ordset()) -> {true, list()} | false.
+-spec find_enabled(list(), trace_compiled()) ->
+         {true, list()} | false.
 find_enabled(Types, Enabled) ->
     MatchSet = ordsets:from_list([node()|Types]),
     Intersection = ordsets:intersection(Enabled, MatchSet),

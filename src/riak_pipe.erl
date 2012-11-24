@@ -95,7 +95,7 @@
 -type exec_opts() :: [exec_option()].
 -type exec_option() :: {sink, fitting()}
                      | {sink_type, riak_pipe_sink:sink_type()}
-                     | {trace, all | list() | set() | ordsets:ordset()}
+                     | {trace, list() | riak_pipe_log:trace_filter()}
                      | {log, sink | sasl}.
 -type stat() :: {atom(), term()}.
 
