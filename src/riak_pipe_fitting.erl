@@ -48,6 +48,10 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -record(worker, {partition :: riak_pipe_vnode:partition(),
                  pid :: pid(),
                  monitor :: reference()}).
@@ -571,3 +575,46 @@ is_iolist(Name) when is_integer(Name), Name >= 0, Name =< 255 ->
     true;
 is_iolist(_) ->
     false.
+
+-ifdef(TEST).
+validate_test_() ->
+    [{"very bad fitting",
+      %% undefined name because it's not a fitting_spec
+      ?_assertMatch({badarg, undefined, _Msg},
+                    (catch riak_pipe_fitting:validate_fitting(x)))},
+     {"bad fitting module",
+      ?_assertMatch({badarg, empty_pass, _Msg},
+                    (catch riak_pipe_fitting:validate_fitting(
+                             #fitting_spec{name=empty_pass,
+                                           module=does_not_exist})))},
+     {"bad fitting argument",
+      ?_assertMatch({badarg, empty_pass, _Msg},
+                    (catch riak_pipe_fitting:validate_fitting(
+                             #fitting_spec{name=empty_pass,
+                                           module=riak_pipe_w_reduce,
+                                           arg=bogus_arg})))},
+     {"good partfun",
+      ?_assertEqual(ok,
+                    (catch
+                         riak_pipe_fitting:validate_fitting(
+                           #fitting_spec{name=empty_pass,
+                                         module=riak_pipe_w_pass,
+                                         chashfun=follow})))},
+     {"bad partfun",
+      ?_assertMatch({badarg, empty_pass, _Msg},
+                    (catch riak_pipe_fitting:validate_fitting(
+                             #fitting_spec{name=empty_pass,
+                                           module=riak_pipe_w_pass,
+                                           chashfun=fun(_,_) -> 0 end})))},
+     {"format_name binary",
+      ?_assertEqual(<<"foo">>,
+                    riak_pipe_fitting:format_name(<<"foo">>))},
+     {"format_name string",
+      ?_assertEqual("foo",
+                    riak_pipe_fitting:format_name("foo"))},
+     {"format_name atom",
+      ?_assertEqual("[foo]",
+                    lists:flatten(riak_pipe_fitting:format_name([foo])))}
+     ].
+
+-endif.
