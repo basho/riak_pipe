@@ -74,7 +74,8 @@
          generic_transform/4,
          example_reduce/0,
          example_tick/3,
-         example_tick/4]).
+         example_tick/4,
+         zero_part/1]).
 -ifdef(TEST).
 -export([do_dep_apps/1, t/0, exec_prepare_runtime/1]).
 -endif.
@@ -619,7 +620,7 @@ generic_transform(MsgFun, DriverFun, ExecOpts, NumFittings) ->
                           #fitting_spec{name="generic transform",
                                         module=riak_pipe_w_xform,
                                         arg=MsgFunThenSendFun,
-                                        chashfun=fun zero_part/1}),
+                                        chashfun={?MODULE, zero_part}}),
           ExecOpts),
     ok = DriverFun(Pipe),
     example_receive(Pipe).
@@ -666,7 +667,7 @@ example_tick(TickLen, NumTicks, ChainLen) ->
 example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
     Specs = [#fitting_spec{name=list_to_atom("tick_pass" ++ integer_to_list(F_num)),
                            module=riak_pipe_w_pass,
-                           chashfun = fun zero_part/1}
+                           chashfun={?MODULE, zero_part}}
              || F_num <- lists:seq(1, ChainLen)],
     {ok, Pipe} = riak_pipe:exec(Specs, [{log, sink},
                                         {trace, all}]),
