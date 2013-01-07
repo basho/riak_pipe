@@ -33,9 +33,6 @@
          workers/1]).
 -export([validate_fitting/1,
          format_name/1]).
--ifdef(TEST).
--export([crash/2]).
--endif.
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -125,13 +122,6 @@ workers(Fitting) ->
     catch exit:{noproc, _} ->
             gone
     end.
-
--ifdef(TEST).
-crash(#fitting{pid=Pid}, Fun) ->
-    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun});
-crash(Pid, Fun) ->
-    gen_fsm:sync_send_all_state_event(Pid, {test_crash, Fun}).
--endif.
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -316,6 +306,7 @@ handle_sync_event(workers, _From, StateName, #state{workers=Workers}=State) ->
     {reply, Partitions, StateName, State};
 handle_sync_event({test_crash, Fun},_,_,_) ->
     %% Only test-enabled client sends this.
+    %% See riak_test's rt_pipe:crash_fitting/2 and pipe_verify_* tests
     Fun();
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
