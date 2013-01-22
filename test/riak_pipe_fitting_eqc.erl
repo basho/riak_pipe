@@ -23,10 +23,16 @@
 
 -compile(export_all).
 
+-ifdef(EQC).
+
 -include("riak_pipe.hrl").
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -record(state, {
           vnodes = [] :: [pid()] %% the "vnode" processes
@@ -47,6 +53,26 @@
           sink :: sink_result(), %% messages the sink received
           vnodes :: [vnode_result()] %% messages each vnode received
          }).
+
+prop_eoi_test_() ->
+    % {spawn, 
+    %  [{setup,
+    %    fun setup/0,
+    %    fun cleanup/1,
+    %    [%% Check networking/clients are set up 
+    %     ?_assert(node() /= 'nonode@nohost'),
+    %     ?_assertEqual(pong, net_adm:ping(node())),
+    %     {timeout, 60, [?_assertEqual(pang, net_adm:ping('nonode@nohost'))]},
+    %     ?_assertMatch({ok,_C}, riak:local_client()),
+    %     %% Run the quickcheck tests
+    {timeout, 60000, % do not trust the docs - timeout is in msec
+      ?_assertEqual(true, quickcheck(numtests(100, ?QC_OUT(prop_eoi()))))
+    }.
+    %    ]
+    %   }
+    %  ]
+    % }.
+
 
 %% @doc Make sure that all vnodes that obtain details from a fitting
 %% get an eoi message from the fitting.
@@ -274,3 +300,5 @@ get_vnode_msgs(V) ->
         {'DOWN', M, process, V, _} ->
             {error, down}
     end.
+
+-endif.
