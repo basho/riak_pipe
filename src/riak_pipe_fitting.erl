@@ -100,7 +100,11 @@ eoi(#fitting{pid=Pid, ref=Ref, chashfun=C}) when C =/= sink ->
 get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
     try
         gen_fsm:sync_send_event(Pid, {get_details, Ref, Partition, self()})
-    catch exit:{noproc,_} ->
+    catch exit:_ ->
+            %% catching all exit types here , since we don't care
+            %% whether the fitting was gone before we asked ('noproc')
+            %% or if it went away before responding ('normal' or other
+            %% exit reason)
             gone
     end.
 
@@ -113,6 +117,10 @@ worker_done(#fitting{pid=Pid, ref=Ref}) ->
     try
         gen_fsm:sync_send_event(Pid, {done, Ref, self()})
     catch exit:_ ->
+            %% catching all exit types here , since we don't care
+            %% whether the fitting was gone before we asked ('noproc')
+            %% or if it went away before responding ('normal' or other
+            %% exit reason)
             gone
     end.
 
@@ -122,7 +130,11 @@ worker_done(#fitting{pid=Pid, ref=Ref}) ->
 workers(Fitting) ->
     try 
         {ok, gen_fsm:sync_send_all_state_event(Fitting, workers)}
-    catch exit:{noproc, _} ->
+    catch exit:_ ->
+            %% catching all exit types here , since we don't care
+            %% whether the fitting was gone before we asked ('noproc')
+            %% or if it went away before responding ('normal' or other
+            %% exit reason)
             gone
     end.
 
