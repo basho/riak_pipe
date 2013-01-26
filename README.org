@@ -444,7 +444,7 @@ required parameters for sending output.
 The behavior's =process/3= module will be called each time a new input
 is pulled from the queue.  The parameters to =process/3= will be the
 new input, a "last in preflist" indicator
-(see [[Aside: Preflist Forwarding and NVal]] below), and the module's
+(see [[Aside: Preflist Forwarding and Nval]] below), and the module's
 state (initialized in =init/2=).  The function must return a tuple of
 the form ={Result, NewState}= where =NewState= is a potentially
 modified version of the state passed in (this =NewState= will be
