@@ -369,7 +369,7 @@ explicitly.
 While a pipeline is running, some information about what its workers
 are up to can be fetched using =riak_pipe:status/1=.  For example:
 
-#+BEGIN_SRC
+#+BEGIN_SRC erlang
 {ok, Pipe} = riak_pipe:example_start().
 ok = riak_pipe:queue_work(Pipe, "foo").
 Status = riak_pipe:status(Pipe).
@@ -379,7 +379,7 @@ The code above starts a pipeline with one fitting named =empty_pass=,
 sends it one input, and then requests its status.  The =Status=
 received on the last line, will be something like the following:
 
-#+BEGIN_SRC
+#+BEGIN_SRC erlang
 [{empty_pass,[[{node,'riak@127.0.0.1'},
                {partition,22835963083295358096932575511191922182123945984},
                {fitting,<0.469.0>},
