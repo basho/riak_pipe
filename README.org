@@ -49,14 +49,16 @@ it).  The vnode, upon receiving an input, adds it to a queue of other
 inputs for that fitting.
 
 The first time a =riak_pipe= vnode receives a message for a fitting it
-has never seen before, it also starts a worker process to consume the
-queue.  The worker is where the behavior is evaluated.  In this way,
-each fitting's queue is consumed in parallel to others, as the worker
-for each queue operates independently.
+has never seen before, it also starts a *worker process* (hereafter
+referred to as simply a *worker*) to consume the queue.  The worker is
+where the behavior is evaluated.  In this way, each fitting's queue is
+consumed in parallel to others, as the worker for each queue operates
+independently.
 
-Worker processes are also the actors that send outputs to the next
-vnode that will process them.  This is important because that sending
-process will *block* until the input is added to its queue.
+Workers are also the actors that send outputs to the next vnode that
+will process them.  This is important because that sending process
+will *block* until the input is added to the queue assigned to the
+appropriate worker on the next vnode.
 
 The sizes of queues are limited, so if a worker is particularly slow,
 its queue will reach capacity and workers adding new inputs will block
@@ -64,33 +66,46 @@ until the worker catches up.  This back pressure prevents processes and
 their mailboxes from growing unboundedly when workers outrun their
 followers.
 
+** Fitting processes
+
+For each fitting to be executed, there is a *coordinator* for the
+cluster as a whole, separate from the per-vnode worker. Each
+coordinator is responsible for conveying its fitting's behavior as
+well as handling the coordination necessary at the end of input.
+
+** Sinks
+
+Each pipeline has a *sink*, where all of the final output is sent
+(and, optionally, log messages as well). By default, the sink and the
+client process that initiated the pipeline are one and the same.
+
 * Step by Step
 
 ** Start the pipeline
 
 The first step in performing an operation on =riak_pipe= is to set up
-the pipeline.  The pipeline is represented by a set of processes, one
-per fitting.  Each fitting process knows the details for the behavior
-of the fitting, as well as the =pid= of the fitting following it and
-the partition choice function for distributing that fitting's inputs.
+the coordinators to manage the pipeline. Each coordinator knows the
+details for the behavior of its fitting, the partition choice for
+distributing output to the workers for the next fitting, and the =pid=
+of the next coordinator.
 
 =riak_pipe= exposes a client interface (see the [[API]] section) for
-starting these fitting processes.  It begins by starting a "builder"
-process, which then starts and monitors each of the fitting processes,
+starting these coordinators.  It begins by starting a "builder"
+process, which then starts and monitors each of the coordinators,
 starting with the final one (so that its =pid= can be passed to its
-predecessor).  When all of the fitting processes have started, a
-structure capturing their details is returned to the client.
+predecessor).  When all of the coordinators have started, a structure
+capturing their details is returned to the client.
 
 ** Send inputs
 
 All inputs are sent directly to the vnodes that will process them.
-They are tagged with the =pid= of the fitting that holds the details
-of how they will be processed.  A vnode will add each input to a queue
-it maintains for that fitting.  The input-sending operation will block
-until the input has been added to the queue.
+They are tagged with the =pid= of the coordinator that holds the
+details of how they will be processed.  A vnode will add each input to
+a queue it maintains for that fitting.  The input-sending operation
+will block until the input has been added to the queue.
 
-Sending inputs directly to vnodes is done in favor of sending every
-input to the fitting process and distributing from there, in order to
+Sending inputs directly to vnodes is done instead of sending every
+input to the coordinator and distributing from there, in order to
 remove a bottleneck and reduce messaging.
 
 Blocking input-sending until the enqueueing process completes is used
@@ -106,8 +121,8 @@ partitions in the cluster.
 
 The first time a vnode receives an input for a fitting that it has not
 seen before, it requests the details of that fitting from the =pid= in
-the input tag.  Once it has those details, it may spin up a worker and
-begin processing items in its queue.
+the input tag (the coordinator).  Once it has those details, it may
+spin up a worker and begin processing items in its queue.
 
 ** Process inputs
 
@@ -120,32 +135,32 @@ request to add an input to the queue may be honored.
 ** Send end-of-inputs
 
 When a client has no more inputs to add to the pipeline, it notifies
-the first fitting process of the end of its inputs (EOI).  The fitting
-process then notifies each of the vnodes that is working for it that
-no more inputs will be coming.  The fitting process created this list
-of workers by remembering every partition that has asked for the
-details of the fitting (and monitoring for crashes of those vnodes).
+the first coordinator of the end of its inputs (EOI).  The coordinator
+then notifies each of the vnodes that is working for it that no more
+inputs will be coming.  The coordinator created this list of workers
+by remembering every partition that has asked for the details of the
+fitting (and monitoring for crashes of those vnodes).
 
 ** Wait for done
 
-When a vnode receives an end-of-inputs message from a fitting, it
+When a vnode receives an end-of-inputs message from a coordinator, it
 marks the worker's queue.  When the worker processes the final element
 in the queue (including any that may have been blocking), the vnode
-shuts down the worker, and notifies the fitting process that it has
+shuts down the worker, and notifies the coordinator that it has
 finished.
 
 ** Forward end-of-inputs
 
-When a fitting receives all of the 'done' messages from vnodes that
-were working for it, it forwards the end-of-inputs messages to the
-next fitting process (or to the client, in the case of the final
-fitting), and the eoi/done-signaling begins again.
+When a coordinator receives all of the 'done' messages from vnodes
+that were working for it, it forwards the end-of-inputs messages to
+the next coordinator, where the eoi/done-signaling begins again, or
+the sink.
 
 This form of end-of-inputs signaling works because all input sending
 is synchronous (blocking until confirmed queue addition) in
 =riak_pipe=.  This means that no inputs will be in flight, in delayed
 messages, when end-of-inputs is sent.  In addition, synchronizing all
-"done" messages for a fitting in the fitting process means that no
+"done" messages for a fitting in the coordinator means that no
 additional tracking of which workers have finished is necessary.
 
 * API
@@ -213,10 +228,9 @@ the pipeline as a whole.  Currently supported options are:
 
  - sink :: =fitting()= | *=undefined=*
 
-           Where the final fitting should send its messages.  Leave
-           this =undefined= to have the final fitting send outputs as
-           messages to the process that called
-           =riak_pipe:exec/2=.
+           Where workers for the final fitting should send messages.
+           Leave this =undefined= to deliver outputs as messages to
+           the client, the process that called =riak_pipe:exec/2=.
 
  - log :: =sink= | =lager= | =sasl= | *=undefined=*
 
@@ -262,10 +276,10 @@ that you're done with =riak_pipe:eoi/1=:
 riak_pipe:eoi(Pipe)
 #+END_SRC
 
-This allows the fitting to begin shutting down its workers.  When all
-of a fitting's workers finish, the fitting will automatically forward
-the =eoi= (End Of Inputs) to the following fitting, and the final
-fitting will send its =eoi= to the sink.
+This allows the coordinator to begin shutting down its workers.  When
+all of a fitting's workers finish, the coordinator will automatically
+forward the =eoi= (End Of Inputs) to the following coordinator, and
+the final coordinator will send its =eoi= to the sink.
 
 *** Receiving outputs
 
@@ -287,7 +301,7 @@ Results are delivered to the sink as =pipe_result= records (defined in
 }
 #+END_SRC
 
-When the final fitting finishes, its =eoi= is delivered as a
+When the final coordinator finishes, its =eoi= is delivered as a
 =pipe_eoi= record (also defined in =include/riak_pipe.hrl=).
 
 #+BEGIN_SRC erlang
@@ -465,7 +479,7 @@ vnode's queue for the next fitting.
 
 A behavior's =done/1= function is called when the worker's queue is
 empty after it receives the =eoi= (End Of Inputs) message from its
-fitting.  This is the last chance that the behavior will have to
+coordinator.  This is the last chance that the behavior will have to
 produce output.  The function should return =ok=.  The process running
 the behavior will terminate shortly after =done/1= finishes.
 
@@ -500,7 +514,7 @@ First, on the old node, the =archive/1= function will be called with
 the last state returned from =init/2= or =process/3=.  The function
 should return a tuple of the form ={ok, Archive}=, where =Archive= is
 any serializable term that represents the state needing to be
-transferred to the new node.  The worker process terminates soon after
+transferred to the new node.  The worker terminates soon after
 =archive/1= completes.
 
 When the new vnode receives a handoff message from the old node, it
@@ -572,7 +586,7 @@ to forward it along, only then is the next vnode in the preflist asked
 to process the input.
 
 When the final vnode in the preflist is given the input for
-processing, it's fitting behavior's =process/3= function will have the
+processing, its fitting behavior's =process/3= function will have the
 =LastPreflist= parameter set to =true=.  If the final vnode's worker
 again asks to forward the input, an error is logged (either in the
 node's log, or via a message to the sink, depending on =log= and
@@ -603,7 +617,7 @@ If the behavior raises an exception, yes another trace error is
 generated, but the proplist now includes ={type, Type}= and ={error,
 Error}= where =Type= and =Error= are matches from a =catch Type:Error
 ->= clause surrounding the call to the behavior.  In this case, the
-worker process will also exit.  If more inputs arrive for this fitting
+worker will also exit.  If more inputs arrive for this fitting
 (or have already arrived and are waiting in the queue), the worker
 will be restarted, in the same manner it was started initially.  This
 is meant to give the behavior a chance to refresh any stateful
