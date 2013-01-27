@@ -66,7 +66,7 @@ until the worker catches up.  This back pressure prevents processes and
 their mailboxes from growing unboundedly when workers outrun their
 followers.
 
-** Fitting processes
+** Coordinators
 
 For each fitting to be executed, there is a *coordinator* for the
 cluster as a whole, separate from the per-vnode worker. Each
