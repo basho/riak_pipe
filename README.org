@@ -645,7 +645,7 @@ should be set to at least =[error]=, though =all= will also work.
 =riak_pipe= includes some standard fittings.  They are all named with
 the prefix =riak_pipe_w_=.
 
-** riak\_pipe\_w\_pass
+** =riak_pipe_w_pass=
 
 The "pass" behavior simply emits its input as its output.  It is
 primarily useful for demonstration of the worker API, and for catching
