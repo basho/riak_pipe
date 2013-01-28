@@ -46,7 +46,7 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-%% @doc Start a new fitting under this supervisor.
+%% @doc Start a new fitting coordinator under this supervisor.
 -spec add_fitting(pid(),
                   riak_pipe:fitting_spec(),
                   riak_pipe:fitting(),
@@ -56,7 +56,7 @@ add_fitting(Builder, Spec, Output, Options) ->
     ?DPF("Adding fitting for ~p", [Spec]),
     supervisor:start_child(?SERVER, [Builder, Spec, Output, Options]).
 
-%% @doc Terminate a fitting immediately.  Useful for tearing down
+%% @doc Terminate a coordinator immediately.  Useful for tearing down
 %% pipelines that may be otherwise swamped with messages from
 %% restarting workers.
 -spec terminate_fitting(riak_pipe:fitting()) -> ok | {error, term()}.
