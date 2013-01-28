@@ -653,7 +653,7 @@ the simple log/trace output it produces.  It should tolerate whatever
 partition function you throw at it, because it won't matter where it
 is run.
 
-** riak\_pipe\_w\_tee
+** =riak_pipe_w_tee=
 
 The "tee" behavior operates just like the "pass" behavior, but also
 sends its input as output *directly to the sink*.  It is primarily
@@ -662,7 +662,7 @@ results delivered to the client are tagged with the name of the
 fitting that produced them, so name your fittings wisely.  "Tee"
 should also tolerate whatever partition function you throw at it.
 
-** riak\_pipe\_w\_xform
+** =riak_pipe_w_xform=
 
 The "xform" behavior is a simple transform operator.  It expects an
 arity-3 function as its argument.  For each input it receives, it
@@ -673,7 +673,7 @@ for this behavior, since that keeps data local to the node, instead of
 clogging inter-node channels, but it should tolerate any partition
 function you throw at it anyway.
 
-** riak\_pipe\_w\_reduce
+** =riak_pipe_w_reduce=
 
 The "reduce behavior" is a simple accumulating reducer.  It expects an
 arity-4 function as its argument.  For each input it receives, it
@@ -698,7 +698,7 @@ reduce results locally, before an identical reduce with a consistent
 partition function is used to reduce globally), but surprising in many
 others.
 
-** External: riak\_kv\_pipe\_get
+** External: =riak_kv_pipe_get=
 
 Riak KV includes a "get" behavior intended to aid computation on data
 stored in Riak KV.  The behavior expects its inputs to be of the form
@@ -713,13 +713,13 @@ index for the KV vnode storing the data.  This allows the behavior to
 efficiently ask the KV vnode directly for the data, instead of working
 through the =riak_kv_get_fsm=.
 
-** Internal: riak\_pipe\_w\_crash
+** Internal: =riak_pipe_w_crash=
 
 The "crash" behavior is used in testing Riak Pipe.  Using argument
 values and inputs, it allows a pipeline to be setup that can later be
 forced to crash in specific ways.
 
-** Internal: riak\_pipe\_w\_fwd
+** Internal: =riak_pipe_w_fwd=
 
 The "forward" behavior is used when a vnode worker exits abnormally,
 and then also fails to restart.  This fitting behavior simply returns
