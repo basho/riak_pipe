@@ -61,7 +61,7 @@ init(Partition, FittingDetails) ->
 
 is_restart(Partition, FittingDetails) ->
     Fitting = FittingDetails#fitting_details.fitting,
-    %% set the fitting process as the heir, such that the ets
+    %% set the fitting coordinator as the heir, such that the ets
     %% table survives when this worker exits, but gets cleaned
     %% up when the pipeline shuts down
     case (catch ets:new(?MEM, [set, {keypos, 1},
@@ -92,7 +92,7 @@ is_restart(Partition, FittingDetails) ->
 -spec process(term(), boolean(), state()) -> {ok, state()}.
 process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     ?T(FittingDetails, [], {processing, Input}),
-    case FittingDetails#fitting_details.arg of 
+    case FittingDetails#fitting_details.arg of
         Input ->
             if Input == init_restartfail ->
                     %% "worker restart failure, input forwarding" test in
@@ -134,4 +134,3 @@ done(#state{fd=FittingDetails}) ->
         _ ->
             ok
     end.
-            
