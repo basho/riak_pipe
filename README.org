@@ -743,3 +743,9 @@ A diagram recording the supervisor/link/monitor structure of the
 Erlang processes involved in Riak Pipe is included in the file
 =riak_pipe_monitors.dot=.  The comments at the top of that file
 describe how to render it to an image using Graphviz.
+
+* Testing
+
+System-level tests for Riak Pipe are included with the [[https://github.com/basho/riak_test][riak_test]]
+repository. You'll find them in the =tests= directory with names that
+start with =pipe_verify_=.
