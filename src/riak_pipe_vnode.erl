@@ -335,7 +335,7 @@ queue_work_send(#fitting{ref=Ref}=Fitting,
           {raw, Ref, self()},
           riak_pipe_vnode_master) of
         {ok, VnodePid} ->
-            queue_work_wait(Ref, Index, Node, VnodePid);
+            queue_work_wait(Ref, Index, VnodePid);
         {error, timeout} ->
             {error, {vnode_proxy_timeout, {Index, Node}}}
     catch exit:{{nodedown, Node}, _GenServerCall} ->
@@ -343,7 +343,7 @@ queue_work_send(#fitting{ref=Ref}=Fitting,
             {error, {nodedown, Node}}
     end.
 
-queue_work_wait(Ref, Index, Node, VnodePid) ->
+queue_work_wait(Ref, Index, VnodePid) ->
     %% monitor in case the vnode is gone before it
     %% responds to this request
     MonRef = erlang:monitor(process, VnodePid),
@@ -360,11 +360,10 @@ queue_work_wait(Ref, Index, Node, VnodePid) ->
                            %% ownership finished changing before we asked
                            %% ... check if Next==Node?
                            riak_core_ring:index_owner(Ring);
-                       {Node, N, _Status} ->
-                           %% ownership is still changing ... should this be
-                           %% looser, and not care whether the transfer was
-                           %% from Node?
-                           N
+                       {_From, To, _Status} ->
+                           %% ownership is still changing ... wait for
+                           %% the future owner
+                           To
                    end,
             %% monitor new vnode, since the input will be handled
             %% there, instead of at the vnode originally contacted
@@ -372,7 +371,7 @@ queue_work_wait(Ref, Index, Node, VnodePid) ->
                                      riak_core_vnode_master,
                                      get_vnode_pid,
                                      [Index, riak_pipe_vnode]),
-            queue_work_wait(Ref, Index, Node, NextPid);
+            queue_work_wait(Ref, Index, NextPid);
         {'DOWN',MonRef,process,VnodePid,Reason} ->
             %% the vnode died unexpectedly
             {error, {vnode_down, Reason}}
