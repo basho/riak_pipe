@@ -355,17 +355,17 @@ queue_work_wait(Ref, Index, Node, VnodePid) ->
         {'DOWN',MonRef,process,VnodePid,normal} ->
             %% the vnode likely just shut down after completing handoff
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            case riak_core_ring:next_owner(Ring, Index) of
-                {undefined, undefined, undefined} ->
-                    %% ownership finished changing before we asked
-                    %% ... check if Next==Node?
-                    Next = riak_core_ring:index_owner(Ring);
-                {Node, Next, _Status} ->
-                    %% ownership is still changing ... should this be
-                    %% looser, and not care whether the transfer was
-                    %% from Node?
-                    ok
-            end,
+            Next = case riak_core_ring:next_owner(Ring, Index) of
+                       {undefined, undefined, undefined} ->
+                           %% ownership finished changing before we asked
+                           %% ... check if Next==Node?
+                           riak_core_ring:index_owner(Ring);
+                       {Node, N, _Status} ->
+                           %% ownership is still changing ... should this be
+                           %% looser, and not care whether the transfer was
+                           %% from Node?
+                           N
+                   end,
             %% monitor new vnode, since the input will be handled
             %% there, instead of at the vnode originally contacted
             {ok, NextPid} = rpc:call(Next,
