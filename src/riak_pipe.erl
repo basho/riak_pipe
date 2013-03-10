@@ -154,7 +154,7 @@
 %%      sink (all output, logging, and trace messages).  If specified,
 %%      `Sink' should be a `#fitting{}' record, filled with the pid of
 %%      the process prepared to receive these messages.
-%%</dd<dt>
+%%</dd><dt>
 %%      `{sink_type, Type}'
 %%</dt><dd>
 %%      Specifies the way in which messages are delivered to the
