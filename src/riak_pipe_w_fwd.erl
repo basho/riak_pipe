@@ -35,6 +35,7 @@
 
 -record(state, {fd :: riak_pipe_fitting:details()}).
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 %% @doc Initialization just stows the fitting details in the module's
 %%      state, for sending traces in {@link process/3}.

@@ -52,6 +52,7 @@
                 sinkmon :: reference()}). % monitor ref
 
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 %%%===================================================================
 %%% API
