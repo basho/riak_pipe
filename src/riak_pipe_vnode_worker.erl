@@ -161,6 +161,7 @@
                 vnode :: pid(),
                 modstate :: term()}).
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 %% @doc Get information about this behavior.
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].

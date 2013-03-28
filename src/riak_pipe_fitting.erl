@@ -62,7 +62,7 @@
 
 -opaque state() :: #state{}.
 
--export_type([details/0]).
+-export_type([state/0, details/0]).
 -type details() :: #fitting_details{}.
 
 %%%===================================================================
