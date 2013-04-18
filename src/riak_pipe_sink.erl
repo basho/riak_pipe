@@ -33,6 +33,14 @@
 
 -include("riak_pipe.hrl").
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+%% have to transform the 'receive' of the work results
+-compile({parse_transform, pulse_instrument}).
+%% don't trasnform toplevel test functions
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
+-endif.
+
 -export_type([sink_type/0]).
 -type sink_type() :: raw
                    | {fsm, Period::integer(), Timeout::timeout()}.
