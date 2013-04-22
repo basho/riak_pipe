@@ -93,6 +93,7 @@
                 p :: riak_pipe_vnode:partition(),
                 fd :: riak_pipe_fitting:details()}).
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 %% @doc Setup creates the store for evaluation results (a dict()) and
 %%      stashes away the `Partition' and `FittingDetails' for later.
