@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc Test riak_pipe_fitting for no-input, reduce-once-anyway
-%% behavior, related to riak_pipe#48 and riak_pipe#49.
+%% behavior, possibly related to github issues 48 and 49.
 -module(reduce_fitting_pulse).
 
 -include("riak_pipe.hrl").
@@ -48,7 +48,11 @@
 -compile({pulse_skip,[{death_test_,0}]}).
 -endif.
 
-%%% Worker Definition
+%%% Worker Definition This is a rough copy of important parts of
+%% riak_kv_w_reduce. The important bit is that it defines
+%% no_input_run_reduce_once/0 as true, so that the fitting process
+%% will run these functions itself, instead of evaulating them in a
+%% vnode worker.
 
 no_input_run_reduce_once() ->
     true.
@@ -87,7 +91,12 @@ maybe_send_output({Partition, #fitting_details{arg=Arg}=Details}) ->
 %% none of these tests make sense if PULSE is not used
 -ifdef(PULSE).
 
-%% @doc Nothing should ever cause the fitting to exit abnormally
+%% @doc Nothing should ever cause the fitting to exit abnormally.
+%% This is a bit of a wide net to cast, with more options than are
+%% likely necessary to find edge cases. It was constructed while
+%% searching for the unknown source of github issues 48 and 49.
+%% Although only a small corner provoked failures, such coverage may
+%% be useful when making changes in the future, so it's staying in.
 prop_fitting_dies_normal() ->
     ?FORALL({Seed, Trace, Output, SinkType,
              {Eoi, Destroy, AlsoDestroySink, ExitPoint}},
@@ -95,13 +104,22 @@ prop_fitting_dies_normal() ->
              ?LET({Eoi, Destroy},
                   {bool(), bool()},
                   {Eoi, Destroy,
+                   %% to mimick riak_kv HTTP&PB endpoints, we only
+                   %% destroy the sink if we also destroy the pipe
                    oneof([Destroy, false]),
                    oneof([before_eoi]
+                         %% can't exit after eoi if there's no eoi
                          ++ [ after_eoi || Eoi]
+                         %% similarly for destroy
                          ++ [ after_destroy || Destroy]
+                         %% and "never" exiting requires at least one of
+                         %% eoi or destroy, or the test will hang
                          ++ [ never || Eoi or Destroy])})},
+
+            %% this is a gigantic table to collect, but useful to see anyway
             collect({Trace, Output, SinkType,
                      Eoi, Destroy, AlsoDestroySink, ExitPoint},
+
             begin
                 ExitReasons =
                     fitting_exit_reason(
@@ -110,15 +128,19 @@ prop_fitting_dies_normal() ->
                 ?WHENFAIL(
                    io:format(user, "Exit Reasons: ~p~n", [ExitReasons]),
                    exit_reason_is_normalish(
-                    proplists:get_value(fitting, ExitReasons)) andalso
-                    proplists:get_value(client, ExitReasons) == ExitPoint)
+                     proplists:get_value(fitting, ExitReasons)) andalso
+                   proplists:get_value(client, ExitReasons) == ExitPoint)
             end)).
 
 exit_reason_is_normalish(normal) ->
+    %% the fitting chose to exit on its own
     true;
 exit_reason_is_normalish(shutdown) ->
+    %% the fitting's supervisor shut it down
     true.
 
+%% @doc This is a nice convenience to have when re-running failures
+%% manually.
 fitting_exit_reason(Seed, Trace, Output, SinkType,
                     Eoi, Destroy, AlsoDestroySink, ExitPoint) ->
     pulse:run_with_seed(
@@ -128,6 +150,13 @@ fitting_exit_reason(Seed, Trace, Output, SinkType,
       end,
       Seed).
 
+-endif. %% PULSE
+
+%% PULSE is not *required* to run this code. The code is much more
+%% interesting with PULSE enabled, but it may be useful to run without
+%% PULSE to sanity check.
+
+%% @doc The actual run.
 fitting_exit_reason(Trace, Output, SinkType,
                     Eoi, Destroy, AlsoDestroySink, ExitPoint) ->
     Supervisors = [riak_pipe_builder_sup,
@@ -135,6 +164,8 @@ fitting_exit_reason(Trace, Output, SinkType,
                    reduce_fitting_pulse_sink_sup],
     [ {ok,_} = Sup:start_link() || Sup <- Supervisors ],
 
+    %% we want the client linked to this process so that it dies if
+    %% the test dies, but we don't want death to spread the other way
     erlang:process_flag(trap_exit, true),
     ClientRef = make_ref(),
     Self = self(),
@@ -283,20 +314,21 @@ maybe_exit(Now, Now) ->
 maybe_exit(_Now, _NotNow) -> 
     ok.
 
+-ifdef(PULSE).
+
+%% these tests are not interesting without pulse enabled
 death_test_() ->
     {setup,
         fun() ->
-                error_logger:tty(false),
                 pulse:start()
         end,
         fun(_) ->
-                pulse:stop(),
-                error_logger:tty(true)
+                pulse:stop()
         end,
      {timeout, 60,
         [
          ?_assert(eqc:quickcheck(
-                    eqc:numtests(5000, prop_fitting_dies_normal())))
+                    eqc:testing_time(55, prop_fitting_dies_normal())))
         ]}
     }.
 
