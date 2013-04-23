@@ -134,7 +134,14 @@ send_to_sink_fsm(Pid, Msg, Timeout, true, _Count) ->
         put(sink_sync, 0),
         ok
     catch
-        exit:{timeout,_} -> {error, timeout};
-        exit:{noproc,_}  -> {error, sink_died}
+        exit:{timeout,_} ->
+            {error, timeout};
+        exit:{_Reason,{gen_fsm,sync_send_event,_}} ->
+            %% we don't care why it died, just that it did ('noproc'
+            %% and 'normal' have been seen; others could be possible)
+            {error, sink_died};
+        exit:{_Reason,{pulse_gen_fsm,sync_send_event,_}} ->
+            %% the pulse parse transform won't catch just the atom 'gen_fsm'
+            {error, sink_died}
     end.
 
