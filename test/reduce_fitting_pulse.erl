@@ -89,9 +89,9 @@ maybe_send_output({Partition, #fitting_details{arg=Arg}=Details}) ->
 
 %% @doc Nothing should ever cause the fitting to exit abnormally
 prop_fitting_dies_normal() ->
-    ?FORALL({Seed, Trace, Output,
+    ?FORALL({Seed, Trace, Output, SinkType,
              {Eoi, Destroy, AlsoDestroySink, ExitPoint}},
-            {pulse:seed(), bool(), bool(),
+            {pulse:seed(), bool(), bool(), oneof([fsm, raw]),
              ?LET({Eoi, Destroy},
                   {bool(), bool()},
                   {Eoi, Destroy,
@@ -100,11 +100,12 @@ prop_fitting_dies_normal() ->
                          ++ [ after_eoi || Eoi]
                          ++ [ after_destroy || Destroy]
                          ++ [ never || Eoi or Destroy])})},
-            collect({Trace, Output, Eoi, Destroy, AlsoDestroySink, ExitPoint},
+            collect({Trace, Output, SinkType,
+                     Eoi, Destroy, AlsoDestroySink, ExitPoint},
             begin
                 ExitReasons =
                     fitting_exit_reason(
-                      Seed, Trace, Output,
+                      Seed, Trace, Output, SinkType,
                       Eoi, Destroy, AlsoDestroySink, ExitPoint),
                 ?WHENFAIL(
                    io:format(user, "Exit Reasons: ~p~n", [ExitReasons]),
@@ -118,27 +119,28 @@ exit_reason_is_normalish(normal) ->
 exit_reason_is_normalish(shutdown) ->
     true.
 
-fitting_exit_reason(Seed, Trace, Output,
+fitting_exit_reason(Seed, Trace, Output, SinkType,
                     Eoi, Destroy, AlsoDestroySink, ExitPoint) ->
     pulse:run_with_seed(
       fun() ->
-              fitting_exit_reason(Trace, Output,
+              fitting_exit_reason(Trace, Output, SinkType,
                                   Eoi, Destroy, AlsoDestroySink, ExitPoint)
       end,
       Seed).
 
-fitting_exit_reason(Trace, Output,
+fitting_exit_reason(Trace, Output, SinkType,
                     Eoi, Destroy, AlsoDestroySink, ExitPoint) ->
-    riak_pipe_builder_sup:start_link(),
-    riak_pipe_fitting_sup:start_link(),
-    reduce_fitting_pulse_sink_sup:start_link(),
+    Supervisors = [riak_pipe_builder_sup,
+                   riak_pipe_fitting_sup,
+                   reduce_fitting_pulse_sink_sup],
+    [ {ok,_} = Sup:start_link() || Sup <- Supervisors ],
 
     erlang:process_flag(trap_exit, true),
     ClientRef = make_ref(),
     Self = self(),
     Client = spawn_link(
                fun() ->
-                       pipe_client({ClientRef, Self}, Trace, Output,
+                       pipe_client({ClientRef, Self}, Trace, Output, SinkType,
                                    Eoi, Destroy, AlsoDestroySink, ExitPoint)
                end),
 
@@ -151,7 +153,14 @@ fitting_exit_reason(Trace, Output,
     %% ensure we get the actual exit reason, instead of a
     %% bogus noproc
     FittingMonitor = monitor(process, fitting_process(Pipe)),
+
+    %% we're not checking the builder at the moment, but watching for
+    %% this 'DOWN' prevents us from killing the builder supervisor
+    %% before the builder exits
     BuilderMonitor = monitor(process, builder_process(Pipe)),
+
+    %% for 'raw' sink type, Sink and Client are the same, but our
+    %% checks should be fine with that
     SinkMonitor = monitor(process, sink_process(Pipe)),
     Client ! {ClientRef, ok},
 
@@ -160,12 +169,11 @@ fitting_exit_reason(Trace, Output,
                              {sink, SinkMonitor},
                              {client, Client}]),
 
-    unlink(whereis(reduce_fitting_pulse_sink_sup)),
-    exit(whereis(reduce_fitting_pulse_sink_sup), kill),
-    unlink(whereis(riak_pipe_fitting_sup)),
-    exit(whereis(riak_pipe_fitting_sup), kill),
-    unlink(whereis(riak_pipe_builder_sup)),
-    exit(whereis(riak_pipe_builder_sup), kill),
+    [ begin
+          unlink(whereis(Sup)),
+          exit(whereis(Sup), kill)
+      end
+      || Sup <- Supervisors ],
     Reasons.
 
 fitting_process(#pipe{fittings=[{fake_reduce, #fitting{pid=Pid}}]}) ->
@@ -193,22 +201,37 @@ receive_exits(Waiting) ->
             receive_exits(Waiting)
     end.
 
-pipe_client({Ref, Test}, Trace, Output,
+pipe_client({Ref, Test}, Trace, Output, SinkType,
             Eoi, Destroy, AlsoDestroySink, ExitPoint) ->
-    %% mimicking riak_kv here, using a supervisor for the sink instead
-    %% of bare linking, in case that makes a difference (though it
-    %% doesn't seem to)
-    {ok, Sink} = reduce_fitting_pulse_sink_sup:start_sink(self(), Ref),
+    Options = case SinkType of
+                  fsm ->
+                      %% mimicking riak_kv here, using a supervisor
+                      %% for the sink instead of bare linking, in case
+                      %% that makes a difference (though it doesn't
+                      %% seem to)
+                      {ok, S} = reduce_fitting_pulse_sink_sup:start_sink(
+                                  self(), Ref),
+                      [{sink, #fitting{pid=S, ref=Ref, chashfun=sink}},
+                       {sink_type, {fsm, 1, infinity}}];
+                  raw ->
+                      [{sink, #fitting{pid=self(), ref=Ref, chashfun=sink}},
+                       {sink_type, raw}]
+              end,
 
     {ok, Pipe} = riak_pipe:exec(
                    [#fitting_spec{name=fake_reduce,
                                   module=?MODULE,
                                   arg=[send_trace || Trace]++
                                       [send_output || Output]}],
-                   [{sink, #fitting{pid=Sink, ref=Ref, chashfun=sink}},
-                    {sink_type, {fsm, 1, infinity}}]),
+                   Options),
 
-    reduce_fitting_pulse_sink:use_pipe(Sink, Ref, Pipe),
+    case SinkType of
+        fsm ->
+            reduce_fitting_pulse_sink:use_pipe(
+              sink_process(Pipe), Ref, Pipe);
+        raw ->
+            ok
+    end,
     
     Test ! {Ref, Pipe},
     receive {Ref, ok} -> ok end,
@@ -225,19 +248,30 @@ pipe_client({Ref, Test}, Trace, Output,
     case Destroy of
         true ->
             riak_pipe:destroy(Pipe),
-            case AlsoDestroySink of
-                true ->
-                    reduce_fitting_pulse_sink_sup:terminate_sink(Sink);
-                false ->
+            case {AlsoDestroySink, SinkType} of
+                {true, fsm} ->
+                    reduce_fitting_pulse_sink_sup:terminate_sink(
+                      sink_process(Pipe));
+                _ ->
+                    %% *this* process is the sink if we're not using fsm
+                    %% (to mimick earlier Riak KV versions)
                     ok
             end,
             maybe_exit(after_destroy, ExitPoint);
         false ->
-            %% we don't care if this call fails, just that it doesn't
-            %% return until the sink has finished its work; mimicking
-            %% riak_kv endpoints that don't wait for results if they
-            %% destroy
-            catch reduce_fitting_pulse_sink:all_results(Sink, Ref)
+            case SinkType of
+                fsm ->
+                    %% we don't care if this call fails, just that it
+                    %% doesn't return until the sink has finished its
+                    %% work; mimicking riak_kv endpoints that don't
+                    %% wait for results if they destroy
+                    catch reduce_fitting_pulse_sink:all_results(
+                            sink_process(Pipe), Ref);
+                raw ->
+                    %% *this* process is the sink if we're not using fsm
+                    %% (to mimick earlier Riak KV versions)
+                    receive #pipe_eoi{ref=Ref} -> ok end
+            end
     end,
 
     %% we can't let the exit be 'normal', because the test process
