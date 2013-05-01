@@ -46,6 +46,14 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+%% have to transform the 'receive' of the work results
+-compile({parse_transform, pulse_instrument}).
+%% don't trasnform toplevel test functions
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
+-endif.
+
 -record(state, {options :: riak_pipe:exec_opts(),
                 pipe :: #pipe{},
                 alive :: [{#fitting{}, reference()}], % monitor ref

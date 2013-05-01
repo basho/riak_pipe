@@ -33,6 +33,14 @@
 
 -include("riak_pipe.hrl").
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+%% have to transform the 'receive' of the work results
+-compile({parse_transform, pulse_instrument}).
+%% don't trasnform toplevel test functions
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
+-endif.
+
 -export_type([sink_type/0]).
 -type sink_type() :: raw
                    | {fsm, Period::integer(), Timeout::timeout()}.
@@ -126,7 +134,14 @@ send_to_sink_fsm(Pid, Msg, Timeout, true, _Count) ->
         put(sink_sync, 0),
         ok
     catch
-        exit:{timeout,_} -> {error, timeout};
-        exit:{noproc,_}  -> {error, sink_died}
+        exit:{timeout,_} ->
+            {error, timeout};
+        exit:{_Reason,{gen_fsm,sync_send_event,_}} ->
+            %% we don't care why it died, just that it did ('noproc'
+            %% and 'normal' have been seen; others could be possible)
+            {error, sink_died};
+        exit:{_Reason,{pulse_gen_fsm,sync_send_event,_}} ->
+            %% the pulse parse transform won't catch just the atom 'gen_fsm'
+            {error, sink_died}
     end.
 

@@ -38,6 +38,14 @@
 
 -include("riak_pipe.hrl").
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+%% have to transform the 'receive' of the work results
+-compile({parse_transform, pulse_instrument}).
+%% don't trasnform toplevel test functions
+-compile({pulse_replace_module,[{supervisor,pulse_supervisor}]}).
+-endif.
+
 -define(SERVER, ?MODULE).
 
 %%%===================================================================

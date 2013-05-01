@@ -18,21 +18,19 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Supervisor of fitting processes.
--module(riak_pipe_fitting_sup).
+%% @doc Support module for reduce_fitting_pulse tests - supervisor for
+%% fsm-style sink, like Riak KV uses.
+-module(reduce_fitting_pulse_sink_sup).
 
 -behaviour(supervisor).
 
 %% API
 -export([start_link/0]).
--export([add_fitting/4,
-         terminate_fitting/1]).
+-export([start_sink/2,
+         terminate_sink/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
-
--include("riak_pipe.hrl").
--include("riak_pipe_debug.hrl").
 
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
@@ -42,41 +40,31 @@
 -compile({pulse_replace_module,[{supervisor,pulse_supervisor}]}).
 -endif.
 
--define(SERVER, ?MODULE).
-
 %%%===================================================================
 %%% API functions
 %%%===================================================================
 
-%% @doc Start the supervisor.  It will be registered under the atom
-%%      `riak_pipe_fitting_sup'.
+%% @doc Start the supervisor.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%% @doc Start a new fitting coordinator under this supervisor.
--spec add_fitting(pid(),
-                  riak_pipe:fitting_spec(),
-                  riak_pipe:fitting(),
-                  riak_pipe:exec_opts()) ->
-         {ok, pid(), riak_pipe:fitting()}.
-add_fitting(Builder, Spec, Output, Options) ->
-    ?DPF("Adding fitting for ~p", [Spec]),
-    supervisor:start_child(?SERVER, [Builder, Spec, Output, Options]).
+%% @doc Start a new worker under the supervisor.
+-spec start_sink(pid(), reference()) -> {ok, pid()}.
+start_sink(Owner, Ref) ->
+    supervisor:start_child(?MODULE, [Owner, Ref]).
 
-%% @doc Terminate a coordinator immediately.  Useful for tearing down
-%% pipelines that may be otherwise swamped with messages from
-%% restarting workers.
--spec terminate_fitting(riak_pipe:fitting()) -> ok | {error, term()}.
-terminate_fitting(#fitting{pid=Pid}) ->
-    supervisor:terminate_child(?SERVER, Pid).
+%% @doc Stop a worker immediately
+-spec terminate_sink(pid()) -> ok | {error, term()}.
+terminate_sink(Sink) ->
+    supervisor:terminate_child(?MODULE, Sink).
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
 
-%% @doc Initialize this supervisor.  This is a `simple_one_for_one',
-%%      whose child spec is for starting `riak_pipe_fitting' FSMs.
+%% @doc Initialize the supervisor.  This is a `simple_one_for_one',
+%% whose child spec is for starting `riak_kv_mrc_sink' FSMs.
 -spec init([]) -> {ok, {{supervisor:strategy(),
                          pos_integer(),
                          pos_integer()},
@@ -92,11 +80,11 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
 
-    Child = {undefined,
-             {riak_pipe_fitting, start_link, []},
-             Restart, Shutdown, Type, [riak_pipe_fitting]},
+    AChild = {undefined, % no registered name
+              {reduce_fitting_pulse_sink, start_link, []},
+              Restart, Shutdown, Type, [reduce_fitting_pulse_sink]},
 
-    {ok, {SupFlags, [Child]}}.
+    {ok, {SupFlags, [AChild]}}.
 
 %%%===================================================================
 %%% Internal functions

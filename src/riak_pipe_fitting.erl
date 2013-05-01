@@ -52,6 +52,14 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+%% have to transform the 'receive' of the work results
+-compile({parse_transform, pulse_instrument}).
+%% don't trasnform toplevel test functions
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
+-endif.
+
 -record(worker, {partition :: riak_pipe_vnode:partition(),
                  pid :: pid(),
                  monitor :: reference()}).
