@@ -33,6 +33,7 @@
 -record(state, {p :: riak_pipe_vnode:partition(),
                 fd :: riak_pipe_fitting:details()}).
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 %% name of the table reMEMbering restarts
 -define(MEM, ?MODULE).

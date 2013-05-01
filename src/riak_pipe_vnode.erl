@@ -115,6 +115,7 @@
                          | #handoff{}}).
 
 -opaque state() :: #state{}.
+-export_type([state/0]).
 
 -record(cmd_enqueue, {fitting :: #fitting{},
                       input :: term(),
