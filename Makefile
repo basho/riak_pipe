@@ -2,6 +2,7 @@ REPO		?= riak_pipe
 RIAK_TAG	 = $(shell git describe --tags)
 REVISION	?= $(shell echo $(RIAK_TAG) | sed -e 's/^$(REPO)-//')
 PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
+PULSE_TESTS	 = reduce_fitting_pulse
 
 .PHONY: deps
 
@@ -21,6 +22,12 @@ distclean: clean ballclean
 
 test: all
 	./rebar skip_deps=true eunit
+
+# You should 'clean' before your first run of this target
+# so that deps get built with PULSE where needed.
+pulse:
+	./rebar compile -D PULSE
+	./rebar eunit -D PULSE skip_deps=true suite=$(PULSE_TESTS)
 
 docs:
 	./rebar skip_deps=true doc
