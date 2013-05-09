@@ -35,6 +35,7 @@
          handoff_finished/2,
          handle_handoff_data/2,
          encode_handoff_item/2,
+         request_hash/1,
          handle_exit/3,
          handle_info/2,
          handle_coverage/4]).
@@ -543,18 +544,26 @@ handle_handoff_command(Cmd, Sender, State) ->
     handle_command(Cmd, Sender, State).
 
 %% @doc Be prepared to handoff.
--spec handoff_starting(node(), state()) -> {true, state()}.
-handoff_starting(_TargetNode, State) ->
+-spec handoff_starting({atom(),{integer(),node()}}, state()) -> {true, state()}.
+handoff_starting({resize_transfer, _}, State) ->
+    {true, State#state{handoff=resize}};
+handoff_starting(_, State) ->
     {true, State#state{handoff=starting}}.
 
 %% @doc Stop handing off before getting started.
 -spec handoff_cancelled(state()) -> {ok, state()}.
+handoff_cancelled(#state{handoff=resize}=State) ->
+    {ok, State#state{handoff=cancelled}};
 handoff_cancelled(#state{handoff=starting, workers_archiving=[]}=State) ->
     %%TODO: handoff is only cancelled before anything is handed off, right?
     {ok, State#state{handoff=cancelled}}.
 
 %% @doc Note that handoff has completed.
 -spec handoff_finished(node(), state()) -> {ok, state()}.
+handoff_finished(_TargetNode, #state{handoff=resize}=State) ->
+    %% in the case of resize there may be workers because we lie and
+    %% don't really handoff anything
+    {ok, State#state{handoff=resize}};
 handoff_finished(_TargetNode, #state{workers=[]}=State) ->
     %% #state.workers should be empty, because they were all handed off
     %% clear out list of handed off items
@@ -593,12 +602,22 @@ encode_handoff_item(Fitting, {Queue, Blocking, Archive}) ->
 
 %% @doc Determine whether this vnode has any running workers.
 -spec is_empty(state()) -> {boolean(), state()}.
+is_empty(#state{handoff=resize}=State) ->
+    %% During ring resizing lie and say we are empty
+    %% this forces queues to remain local to this vnode (no handoff)
+    %% all processing continues in the current ring
+    {true, State};
 is_empty(#state{workers=Workers}=State) ->
     {Workers==[], State}.
 
+%% @doc Forward no requests during ring resizing
+request_hash(_) ->
+    undefined.
+
+
 %% @doc Unused.
 -spec delete(state()) -> {ok, state()}.
-delete(#state{workers=[]}=State) ->
+delete(State) ->
     %%TODO: delete is only called if is_empty/1==true, right?
     {ok, State}.
 
