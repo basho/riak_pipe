@@ -790,9 +790,8 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                              blocking=queue:new(),
                              perf=Perf}};
             gone ->
-                lager:error(
-                  "Pipe worker startup failed:"
-                  "fitting was gone before startup"),
+                lager:debug(
+                  "Fitting was gone before pipe worker startup"),
                 worker_startup_failed
         end
     catch Type:Reason ->
