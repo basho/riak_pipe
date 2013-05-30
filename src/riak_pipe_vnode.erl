@@ -113,7 +113,7 @@
                 worker_q_limit :: pos_integer(),
                 workers_archiving :: [#worker{}],
                 handoff :: undefined | starting | cancelled | finished
-                         | #handoff{}}).
+                         | resize | #handoff{}}).
 
 -opaque state() :: #state{}.
 -export_type([state/0]).
