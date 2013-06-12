@@ -37,14 +37,9 @@
 %%      function will register the `riak_pipe_vnode' module to setup
 %%      the riak_pipe vnode master, and will also announce the
 %%      riak_pipe service to the node watcher.
-%%
-%%      If cluster_info has also been started, this function will
-%%      register the `riak_pipe_cinfo' module with it.
 -spec start(term(), term()) -> {ok, pid()} | {error, term()}.
 start(_StartType, _StartArgs) ->
     %% startup mostly copied from riak_kv
-    catch cluster_info:register_app(riak_pipe_cinfo),
-
     case riak_pipe_sup:start_link() of
         {ok, Pid} ->
             riak_core:register(riak_pipe, [
