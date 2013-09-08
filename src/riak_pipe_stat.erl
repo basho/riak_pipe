@@ -47,10 +47,10 @@ start_link() ->
 
 register_stats() ->
     _ = [begin
-             StatName = stat_name(Name),
-             (catch folsom_metrics:delete_metric(StatName)),
-             ok = register_stat(StatName, Type)
-         end || {Name, Type} <- stats()],
+	     StatName = stat_name(Name),
+	     (catch exometer_entry:delete(StatName)),
+	     register_stat(StatName, Type)
+	 end || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @doc Return current aggregation of all stats.
@@ -102,12 +102,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
 do_update(create) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create}, 1, spiral),
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {inc, 1}, counter);
+    exometer_entry:update([?APP, pipeline, create], 1),
+    exometer_entry:update([?APP, pipeline, active], 1);
 do_update(create_error) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create, error}, 1, spiral);
+    exometer_entry:update([?APP, pipeline, create, error], 1);
 do_update(destroy) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {dec, 1}, counter).
+    exometer_entry:update([?APP, pipeline, active], -1).
 
 %% -------------------------------------------------------------------
 %% Private
@@ -121,12 +121,12 @@ stats() ->
     ].
 
 -spec stat_name(riak_core_stat_q:path()) -> riak_core_stat_q:stat_name().
+stat_name(Name) when is_tuple(Name) ->
+    [?APP | tuple_to_list(Name)];
 stat_name(Name) when is_list(Name) ->
-    list_to_tuple([?APP] ++ Name).
+    [?APP | Name].
 
 -spec register_stat(riak_core_stat_q:stat_name(), stat_type()) -> 
          ok | {error, Subject :: term(), Reason :: term()}.
-register_stat(Name, spiral) ->
-    folsom_metrics:new_spiral(Name);
-register_stat(Name, counter) ->
-    folsom_metrics:new_counter(Name).
+register_stat(Name, Type) ->
+    exometer_entry:new(Name, Type).
