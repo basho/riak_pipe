@@ -46,11 +46,11 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [begin
-         StatName = stat_name(Name),
-         (catch folsom_metrics:delete_metric(StatName)),
-         register_stat(StatName, Type)
-     end || {Name, Type} <- stats()],
+    _ = [begin
+             StatName = stat_name(Name),
+             (catch folsom_metrics:delete_metric(StatName)),
+             ok = register_stat(StatName, Type)
+         end || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @doc Return current aggregation of all stats.

@@ -243,7 +243,7 @@ maybe_shutdown(Reason, _StateName, State) ->
 terminate(_Reason, _StateName, #state{alive=Alive}) ->
     %% this is a brutal kill of each fitting, just in case that fitting
     %% is otherwise swamped with stop/restart messages from its workers
-    [ riak_pipe_fitting_sup:terminate_fitting(F) || {F,_R} <- Alive ],
+    _ = [ _ = riak_pipe_fitting_sup:terminate_fitting(F) || {F,_R} <- Alive ],
     ok.
 
 %% @doc Unused.

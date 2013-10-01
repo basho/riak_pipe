@@ -92,7 +92,7 @@ fitting_worker(C, W) ->
 queues(C) ->
     VnodePids = riak_core_vnode_master:all_nodes(riak_pipe_vnode),
     cluster_info:format(C, "Vnodes active: ~b~n", [length(VnodePids)]),
-    [ queues(C, V) || V <- VnodePids],
+    _ = [ queues(C, V) || V <- VnodePids],
     ok.
 
 %% @doc Print information about the workers on the given vnode.
@@ -101,7 +101,7 @@ queues(C, V) ->
     {Partition, Workers} = riak_pipe_vnode:status(V),
     cluster_info:format(C, " - ~p workers: ~b~n",
                         [Partition, length(Workers)]),
-    [ queue(C, W) || W <- Workers ],
+    _ = [ queue(C, W) || W <- Workers ],
     ok.
 
 %% @doc Print information about the given worker.

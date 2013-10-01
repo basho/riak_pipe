@@ -679,8 +679,8 @@ handle_info({'DOWN',_,process,Pid,_},
                           {vnode, {fitting_died, Partition}}),
                        %% if the fitting died, tear down its worker
                        erlang:unlink(Worker#worker.pid),
-                       riak_pipe_vnode_worker_sup:terminate_worker(
-                         WorkerSup, Worker#worker.pid),
+                       _ = riak_pipe_vnode_worker_sup:terminate_worker(
+                             WorkerSup, Worker#worker.pid),
                        remove_worker(Worker, State);
                    none ->
                        %% TODO: log this somewhere?
@@ -1094,8 +1094,8 @@ restart_worker(#worker{details=FD}=UnstatWorker,
             ?T(Worker#worker.details, [restart_fail],
                {vnode, {restart_fail, Partition, proplist_perf(Worker)}}),
             %% fail blockers, so they resubmit elsewhere
-            [ reply_to_blocker(Blocker, {error, worker_restart_fail})
-              || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
+            _ = [ reply_to_blocker(Blocker, {error, worker_restart_fail})
+                  || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
             %% spin up a stub worker to forward the inputs
             %% (don't want to tie up the vnode doing this sending)
             {ok, FwdWorker} = new_fwd_worker(Worker#worker.details,
@@ -1118,7 +1118,7 @@ restart_worker(#worker{details=FD, q=Queue}=Worker,
     %% this was a forwarding worker for a failed-restart fitting; if
     %% it crashed, there's something *really* wrong - log the errors
     %% and dump it
-    [ ?T_ERR(FD, {restart_dropped, I}) || I <- queue:to_list(Queue) ],
+    _ = [ ?T_ERR(FD, {restart_dropped, I}) || I <- queue:to_list(Queue) ],
     if Worker#worker.inputs_done ->
             %% tell the fitting this worker has exited, so it doesn't
             %% hang around waiting
