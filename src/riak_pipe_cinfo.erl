@@ -47,7 +47,7 @@ cluster_info_generator_funs() ->
 pipelines(C) ->
     Pipes = riak_pipe_builder_sup:builder_pids(),
     cluster_info:format(C, "Pipelines active: ~b~n", [length(Pipes)]),
-    [ pipeline(C, Pipe) || {_Id, Pipe, _Type, _Mods} <- Pipes],
+    _ = [ pipeline(C, Pipe) || Pipe <- Pipes],
     ok.
 
 %% @doc Print information about the given pipeline.
