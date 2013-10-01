@@ -81,12 +81,12 @@
 -define(DEFAULT_WORKER_Q_LIMIT, 4096).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
--record(worker_perf, {started :: calendar:t_now(),
+-record(worker_perf, {started :: erlang:timestamp(),
                        processed = 0 :: non_neg_integer(),
                        failures = 0 :: non_neg_integer(),
                        work_time = 0 :: non_neg_integer(),
                        idle_time = 0 :: non_neg_integer(),
-                       last_time :: calendar:t_now()}).
+                       last_time :: erlang:timestamp()}).
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
                  details :: #fitting_details{},
