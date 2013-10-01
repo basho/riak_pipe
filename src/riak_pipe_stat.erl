@@ -77,6 +77,10 @@ init([]) ->
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({update, {create, Pid}}, State) ->
+    erlang:monitor(process, Pid),
+    do_update(create),
+    {noreply, State};
 handle_cast({update, Arg}, State) ->
     do_update(Arg),
     {noreply, State};
@@ -97,14 +101,13 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
-do_update({create, Pid}) ->
-    folsom_metrics:notify_existing_metric({?APP, pipeline, create}, 1, spiral),
-    folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {inc, 1}, counter),
-    erlang:monitor(process, Pid);
+do_update(create) ->
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create}, 1, spiral),
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {inc, 1}, counter);
 do_update(create_error) ->
-    folsom_metrics:notify_existing_metric({?APP, pipeline, create, error}, 1, spiral);
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create, error}, 1, spiral);
 do_update(destroy) ->
-    folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {dec, 1}, counter).
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {dec, 1}, counter).
 
 %% -------------------------------------------------------------------
 %% Private
