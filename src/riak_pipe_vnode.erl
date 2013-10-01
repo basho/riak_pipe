@@ -1142,7 +1142,7 @@ worker_error(Reason, #worker{details=FD}=Worker, State) ->
 
 %% @doc Reply to a request that has been waiting in a worker's blocked
 %%      queue.
--spec reply_to_blocker(term(), term()) -> true.
+-spec reply_to_blocker(term(), term()) -> any().
 reply_to_blocker(Blocker, Reply) ->
     riak_core_vnode:reply(Blocker, Reply).
 
