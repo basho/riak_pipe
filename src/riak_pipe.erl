@@ -211,7 +211,7 @@
 -spec exec([fitting_spec()], exec_opts()) ->
          {ok, Pipe::pipe()}.
 exec(Spec, Options) ->
-    [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
+    lists:foreach(fun riak_pipe_fitting:validate_fitting/1, Spec),
     CorrectOptions = correct_trace(
                        validate_sink_type(
                          ensure_sink(Options))),
@@ -665,13 +665,13 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
              || F_num <- lists:seq(1, ChainLen)],
     {ok, Pipe} = riak_pipe:exec(Specs, [{log, sink},
                                         {trace, all}]),
-    [begin
-         [riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()}) ||
-             X <- lists:seq(1, BatchSize)],
-         if TickSeq /= NumTicks -> timer:sleep(TickLen);
-            true                -> ok
-         end
-     end || TickSeq <- lists:seq(1, NumTicks)],
+    _ = [begin
+             _ = [ok = riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()})
+                  || X <- lists:seq(1, BatchSize)],
+             if TickSeq /= NumTicks -> timer:sleep(TickLen);
+                true                -> ok
+             end
+         end || TickSeq <- lists:seq(1, NumTicks)],
     riak_pipe:eoi(Pipe),
     example_receive(Pipe).
 

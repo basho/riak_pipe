@@ -203,8 +203,9 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
                            StateName,
                            State#state{alive=Rest});
         false ->
-            if State#state.sinkmon == Ref,
-               ((State#state.pipe)#pipe.sink)#fitting.pid == Pid ->
+            case (State#state.sinkmon == Ref) andalso
+                (((State#state.pipe)#pipe.sink)#fitting.pid == Pid) of
+                true ->
                     %% the sink died - kill the pipe, since it has
                     %% nowhere to send its output
 
@@ -212,7 +213,7 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
                     %% should have generated its own error log, and a
                     %% normal sink exit should not generate spam.
                     {stop, normal, State};
-               true ->
+               false ->
                     %% this wasn't meant for us - ignore
                     {next_state, StateName, State}
             end
@@ -243,7 +244,7 @@ maybe_shutdown(Reason, _StateName, State) ->
 terminate(_Reason, _StateName, #state{alive=Alive}) ->
     %% this is a brutal kill of each fitting, just in case that fitting
     %% is otherwise swamped with stop/restart messages from its workers
-    [ riak_pipe_fitting_sup:terminate_fitting(F) || {F,_R} <- Alive ],
+    _ = [ _ = riak_pipe_fitting_sup:terminate_fitting(F) || {F,_R} <- Alive ],
     ok.
 
 %% @doc Unused.
