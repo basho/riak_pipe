@@ -216,8 +216,8 @@ wait_upstream_eoi({eoi, Ref},
 wait_upstream_eoi({eoi, Ref},
                   #state{ref=Ref, workers=Workers, details=Details}=State) ->
     ?T(Details, [eoi], {fitting, receive_eoi}),
-    [ riak_pipe_vnode:eoi(Pid, Details#fitting_details.fitting)
-      || #worker{pid=Pid} <- Workers ],
+    _ = [ riak_pipe_vnode:eoi(Pid, Details#fitting_details.fitting)
+          || #worker{pid=Pid} <- Workers ],
     {next_state, wait_workers_done, State};
 wait_upstream_eoi(_, State) ->
     %% unknown message - ignore

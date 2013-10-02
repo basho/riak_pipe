@@ -8,7 +8,7 @@ PULSE_TESTS	 = reduce_fitting_pulse
 
 all: deps compile
 
-compile:
+compile: deps
 	./rebar compile
 
 deps:
@@ -49,8 +49,7 @@ dialyzer: compile
 	@echo Use "'make build_plt'" to build PLT prior to using this target.
 	@echo
 	@sleep 1
-	dialyzer -Wno_return --plt $(COMBO_PLT) deps/*/ebin ebin | \
-		fgrep -v -f dialyzer.ignore-warnings
+	dialyzer -Wno_return --plt $(COMBO_PLT) ebin
 
 cleanplt:
 	@echo 

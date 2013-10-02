@@ -83,17 +83,14 @@ new_pipeline(Spec, Options) ->
 pipelines() ->
     Children = builder_pids(),
     Responses = [ riak_pipe_builder:pipeline(BuilderPid)
-                  || {_, BuilderPid, _, _} <- Children ],
+                  || BuilderPid <- Children ],
     %% filter out gone responses
     [ P || {ok, #pipe{}=P} <- Responses ].
 
 %% @doc Get information about the builders supervised here.
--spec builder_pids() -> [{term(),
-                          supervisor:child_id(),
-                          supervisor:worker(),
-                          supervisor:modules()}].
+-spec builder_pids() -> [term()].
 builder_pids() ->
-    supervisor:which_children(?SERVER).
+    [ Pid || {_, Pid, _, _} <- supervisor:which_children(?SERVER) ].
 
 %%%===================================================================
 %%% Supervisor callbacks
