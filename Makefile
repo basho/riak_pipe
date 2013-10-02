@@ -8,7 +8,7 @@ PULSE_TESTS	 = reduce_fitting_pulse
 
 all: deps compile
 
-compile:
+compile: deps
 	./rebar compile
 
 deps:
