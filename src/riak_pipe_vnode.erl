@@ -361,7 +361,7 @@ queue_work_wait(Ref, Index, VnodePid) ->
                        {undefined, undefined, undefined} ->
                            %% ownership finished changing before we asked
                            %% ... check if Next==Node?
-                           riak_core_ring:index_owner(Ring);
+                           riak_core_ring:index_owner(Ring, Index);
                        {_From, To, _Status} ->
                            %% ownership is still changing ... wait for
                            %% the future owner
