@@ -510,6 +510,9 @@ handle_command(Message, _Sender, State) ->
        | {forward, state()}.
 handle_handoff_command(?FOLD_REQ{}=Cmd, Sender, State) ->
     handoff_cmd_internal(Cmd, Sender, State);
+handle_handoff_command(#riak_core_fold_req_v1{}=Cmd, Sender, State) ->
+    handoff_cmd_internal(riak_core_util:make_newest_fold_req(Cmd),
+                         Sender, State);
 handle_handoff_command(#cmd_archive{}=Cmd, _Sender, State) ->
     archive_internal(Cmd, State);
 handle_handoff_command(#cmd_enqueue{fitting=F}=Cmd, Sender,
