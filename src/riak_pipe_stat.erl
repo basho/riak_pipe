@@ -25,6 +25,7 @@
 %% API
 -export([start_link /0, register_stats/0,
          get_stats/0,
+         produce_stats/0,
          update/1,
          stats/0]).
 
@@ -46,12 +47,42 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
+    case riak_core_stat:stat_system() of
+        legacy   -> register_stats_legacy();
+        exometer -> register_stats_exometer()
+    end.
+
+register_stats_legacy() ->
+    _ = [begin
+             StatName = stat_name(Name),
+             (catch folsom_metrics:delete_metric(StatName)),
+             ok = register_stat(StatName, Type)
+         end || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
+
+register_stats_exometer() ->
     riak_core_stat:register_stats(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
+    case riak_core_stat:stat_system() of
+        legacy   -> get_stats_legacy();
+        exometer -> get_stats_exometer()
+    end.
+
+get_stats_legacy() ->
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
+
+get_stats_exometer() ->
     riak_core_stat:get_stats(?APP).
+
+produce_stats() ->
+    {?APP, riak_core_stat_q:get_stats([riak_pipe])}.
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -89,12 +120,26 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
-do_update(create) ->
+do_update(Arg) ->
+    case riak_core_stat:stat_system() of
+        legacy   -> do_update_legacy(Arg);
+        exometer -> do_update_exometer(Arg)
+    end.
+
+do_update_legacy(create) ->
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create}, 1, spiral),
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {inc, 1}, counter);
+do_update_legacy(create_error) ->
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create, error}, 1, spiral);
+do_update_legacy(destroy) ->
+    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {dec, 1}, counter).
+
+do_update_exometer(create) ->
     exometer:update([?PFX, ?APP, pipeline, create], 1),
     exometer:update([?PFX, ?APP, pipeline, active], 1);
-do_update(create_error) ->
+do_update_exometer(create_error) ->
     exometer:update([?PFX, ?APP, pipeline, create, error], 1);
-do_update(destroy) ->
+do_update_exometer(destroy) ->
     exometer:update([?PFX, ?APP, pipeline, active], -1).
 
 %% -------------------------------------------------------------------
@@ -107,3 +152,14 @@ stats() ->
      {[pipeline, create, error], spiral},
      {[pipeline, active], counter}
     ].
+
+-spec stat_name(riak_core_stat_q:path()) -> riak_core_stat_q:stat_name().
+stat_name(Name) when is_list(Name) ->
+    list_to_tuple([?APP] ++ Name).
+
+-spec register_stat(riak_core_stat_q:stat_name(), stat_type()) -> 
+         ok | {error, Subject :: term(), Reason :: term()}.
+register_stat(Name, spiral) ->
+    folsom_metrics:new_spiral(Name);
+register_stat(Name, counter) ->
+    folsom_metrics:new_counter(Name).
