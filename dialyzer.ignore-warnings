@@ -1,0 +1,7 @@
+riak_pipe_qcover_fsm.erl:43: Callback info about the riak_core_coverage_fsm behaviour is not available
+riak_pipe_vnode.erl:24: Callback info about the riak_core_vnode behaviour is not available
+riak_pipe_fitting.erl:571: The variable QLimit can never match since previous clauses completely covered the type pos_integer()
+Unknown functions:
+  cluster_info:format/3
+  cluster_info:register_app/1
+  erl_types:t_from_term/1

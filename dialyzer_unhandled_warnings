@@ -1,0 +1,2 @@
+riak_pipe_qcover_fsm.erl:43: Callback info about the riak_core_coverage_fsm behaviour is not available
+riak_pipe_vnode.erl:24: Callback info about the riak_core_vnode behaviour is not available
