@@ -1,0 +1,1 @@
+riak_pipe_fitting.erl:571: The variable QLimit can never match since previous clauses completely covered the type pos_integer()
