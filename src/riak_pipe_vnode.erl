@@ -369,6 +369,12 @@ queue_work_wait(Ref, Index, VnodePid) ->
                    end,
             %% monitor new vnode, since the input will be handled
             %% there, instead of at the vnode originally contacted
+
+            %% On review of this code path, while it's possible
+            %% rpc:call can return {badrpc, _} or throw an error
+            %% exit:_, the supervision tree for riak_pipe_vnode will
+            %% not try and restart the process, so a crash in this
+            %% case is safe.
             {ok, NextPid} = rpc:call(Next,
                                      riak_core_vnode_master,
                                      get_vnode_pid,
