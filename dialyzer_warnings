@@ -1,0 +1,13 @@
+  Checking whether the PLT /Users/cmeiklejohn/.combo_dialyzer_plt is up-to-date... yes
+  Checking whether the PLT .local_dialyzer_plt is up-to-date... yes
+  Compiling some key modules to native code... done in 0m40.15s
+  Proceeding with analysis...
+riak_pipe_fitting.erl:571: The variable QLimit can never match since previous clauses completely covered the type pos_integer()
+riak_pipe_qcover_fsm.erl:43: Callback info about the riak_core_coverage_fsm behaviour is not available
+riak_pipe_vnode.erl:24: Callback info about the riak_core_vnode behaviour is not available
+Unknown functions:
+  cluster_info:format/3
+  cluster_info:register_app/1
+  erl_types:t_from_term/1
+ done in 0m3.79s
+done (warnings were emitted)

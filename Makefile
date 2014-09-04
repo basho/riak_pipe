@@ -8,7 +8,7 @@ PULSE_TESTS	 = reduce_fitting_pulse
 
 all: deps compile
 
-compile:
+compile: deps
 	./rebar compile
 
 deps:
@@ -20,45 +20,16 @@ clean:
 distclean: clean ballclean
 	./rebar delete-deps
 
-test: all
-	./rebar skip_deps=true eunit
-
 # You should 'clean' before your first run of this target
 # so that deps get built with PULSE where needed.
 pulse:
 	./rebar compile -D PULSE
 	./rebar eunit -D PULSE skip_deps=true suite=$(PULSE_TESTS)
 
-docs:
-	./rebar skip_deps=true doc
-
-APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
+DIALYZER_APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
 	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler
-COMBO_PLT = $(HOME)/.riak_pipe_combo_dialyzer_plt
 
-check_plt: compile
-	dialyzer --check_plt --plt $(COMBO_PLT) --apps $(APPS) deps/*/ebin ebin
-
-
-build_plt: compile
-	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) deps/*/ebin ebin
-
-dialyzer: compile
-	@echo
-	@echo Use "'make check_plt'" to check PLT prior to using this target.
-	@echo Use "'make build_plt'" to build PLT prior to using this target.
-	@echo
-	@sleep 1
-	dialyzer -Wno_return --plt $(COMBO_PLT) deps/*/ebin ebin | \
-		fgrep -v -f dialyzer.ignore-warnings
-
-cleanplt:
-	@echo 
-	@echo "Are you sure?  It takes about 1/2 hour to re-build."
-	@echo Deleting $(COMBO_PLT) in 5 seconds.
-	@echo 
-	sleep 5
-	rm $(COMBO_PLT)
+include tools.mk
 
 # Release tarball creation
 # Generates a tarball that includes all the deps sources so no checkouts are necessary

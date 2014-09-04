@@ -211,7 +211,7 @@
 -spec exec([fitting_spec()], exec_opts()) ->
          {ok, Pipe::pipe()}.
 exec(Spec, Options) ->
-    [ riak_pipe_fitting:validate_fitting(F) || F <- Spec ],
+    lists:foreach(fun riak_pipe_fitting:validate_fitting/1, Spec),
     CorrectOptions = correct_trace(
                        validate_sink_type(
                          ensure_sink(Options))),
@@ -428,11 +428,14 @@ active_pipelines(global) ->
     [ {Node, active_pipelines(Node)}
       || Node <- riak_core_node_watcher:nodes(riak_pipe) ];
 active_pipelines(Node) when is_atom(Node) ->
-    case rpc:call(Node, riak_pipe_builder_sup, pipelines, []) of
-        {badrpc, _}=Reason ->
-            {error, Reason};
+    try rpc:call(Node, riak_pipe_builder_sup, pipelines, []) of
+        {badrpc, _} ->
+            error;
         Pipes ->
             Pipes
+    catch
+        _:_ ->
+            error
     end.
 
 %% @doc Retrieve details about the status of the workers in this
@@ -458,7 +461,7 @@ status(#pipe{fittings=Fittings}) ->
     WorkerFittings = invert_dict(fun(_K, V) -> V end,
                                  fun(K, _V) -> K end,
                                  dict:from_list(FittingWorkers)),
-    
+
     %% grab all worker-fitting statuses at once
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     WorkerStatuses = dict:map(worker_status(Ring), WorkerFittings),
@@ -530,16 +533,21 @@ worker_status(Ring) ->
     fun(Partition, Fittings) ->
             %% lookup vnode pid
             Node = riak_core_ring:index_owner(Ring, Partition),
-            {ok, Vnode} = rpc:call(Node,
-                                   riak_core_vnode_master, get_vnode_pid,
-                                   [Partition, riak_pipe_vnode]),
-            
-            %% get status of each worker
-            {Partition, Workers} = riak_pipe_vnode:status(Vnode, Fittings),
+            try rpc:call(Node, riak_core_vnode_master, get_vnode_pid,
+                               [Partition, riak_pipe_vnode]) of
+                {badrpc, _} = Error ->
+                    [{node, Node}, {partition, Partition}, {error, Error}];
+                {ok, Vnode} ->
+                    %% get status of each worker
+                    {Partition, Workers} = riak_pipe_vnode:status(Vnode, Fittings),
 
-            %% add 'node' and 'partition' to status
-            [ [{node, Node}, {partition, Partition} | W]
-              || W <- Workers ]
+                    %% add 'node' and 'partition' to status
+                    [ [{node, Node}, {partition, Partition} | W]
+                        || W <- Workers ]
+            catch
+                _:_ = Error ->
+                    [{node, Node}, {partition, Partition}, {error, Error}]
+            end
     end.
 
 %% @doc An example run of a simple pipe.  Uses {@link example_start/0},
@@ -665,13 +673,13 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
              || F_num <- lists:seq(1, ChainLen)],
     {ok, Pipe} = riak_pipe:exec(Specs, [{log, sink},
                                         {trace, all}]),
-    [begin
-         [riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()}) ||
-             X <- lists:seq(1, BatchSize)],
-         if TickSeq /= NumTicks -> timer:sleep(TickLen);
-            true                -> ok
-         end
-     end || TickSeq <- lists:seq(1, NumTicks)],
+    _ = [begin
+             _ = [ok = riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()})
+                  || X <- lists:seq(1, BatchSize)],
+             if TickSeq /= NumTicks -> timer:sleep(TickLen);
+                true                -> ok
+             end
+         end || TickSeq <- lists:seq(1, NumTicks)],
     riak_pipe:eoi(Pipe),
     example_receive(Pipe).
 

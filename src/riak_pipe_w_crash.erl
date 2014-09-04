@@ -109,16 +109,17 @@ process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
         {recurse_done_pause, _} ->
             %% "restart after eoi" test in riak_pipe uses this
             %% behavior see done/1 for more details
-            case Input of
-                [_] -> ok;
-                [_|More] ->
-                    timer:sleep(100),
-                    riak_pipe_vnode_worker:recurse_input(
-                      More, Partition, FittingDetails)
-            end,
+            ok = case Input of
+                     [_] -> ok;
+                     [_|More] ->
+                         timer:sleep(100),
+                         riak_pipe_vnode_worker:recurse_input(
+                           More, Partition, FittingDetails)
+                 end,
             {ok, State};
         _Other ->
-            riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
+            ok = riak_pipe_vnode_worker:send_output(
+                   Input, Partition, FittingDetails),
             ?T(FittingDetails, [], {processed, Input}),
             {ok, State}
     end.

@@ -96,24 +96,24 @@ init(Partition, FittingDetails) ->
 -spec process(term(), boolean(), state()) -> {ok, state()}.
 process(Input, _Last, #state{p=Partition, fd=FittingDetails}=State) ->
     ?T(FittingDetails, [], {input, Input, Partition}),
-    riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
+    ok = riak_pipe_vnode_worker:send_output(Input, Partition, FittingDetails),
     if Input =< 0 ->
             ok;
        Input == 1, FittingDetails#fitting_details.arg == testeoi ->
             ?T(FittingDetails, [], {zero1, Partition}),
-            riak_pipe_vnode_worker:recurse_input(
-              0, Partition, FittingDetails),
+            ok = riak_pipe_vnode_worker:recurse_input(
+                   0, Partition, FittingDetails),
             ?T(FittingDetails, [], {zero2, Partition}),
-            riak_pipe_vnode_worker:recurse_input(
-              0, Partition, FittingDetails),
+            ok = riak_pipe_vnode_worker:recurse_input(
+                   0, Partition, FittingDetails),
             timer:sleep(1000),
             ?T(FittingDetails, [], {zero3, Partition}),
-            riak_pipe_vnode_worker:recurse_input(
-              0, Partition, FittingDetails);
+            ok = riak_pipe_vnode_worker:recurse_input(
+                   0, Partition, FittingDetails);
        true ->
             ?T(FittingDetails, [], {recinput, Input-1, Partition}),
-            riak_pipe_vnode_worker:recurse_input(
-              Input-1, Partition, FittingDetails)
+            ok = riak_pipe_vnode_worker:recurse_input(
+                   Input-1, Partition, FittingDetails)
     end,
     {ok, State}.
 

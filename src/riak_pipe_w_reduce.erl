@@ -127,8 +127,8 @@ process({Key, Input}, _Last, #state{accs=Accs}=State) ->
 %%      is where all outputs are sent.
 -spec done(state()) -> ok.
 done(#state{accs=Accs, p=Partition, fd=FittingDetails}) ->
-    [ riak_pipe_vnode_worker:send_output(A, Partition, FittingDetails)
-      || A <- dict:to_list(Accs)],
+    _ = [ ok = riak_pipe_vnode_worker:send_output(A, Partition, FittingDetails)
+          || A <- dict:to_list(Accs)],
     ok.
 
 %% @doc The archive is just the store (dict()) of evaluation results.

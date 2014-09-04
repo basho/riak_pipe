@@ -81,12 +81,12 @@
 -define(DEFAULT_WORKER_Q_LIMIT, 4096).
 -define(FORWARD_WORKER_MODULE, riak_pipe_w_fwd).
 
--record(worker_perf, {started :: calendar:t_now(),
+-record(worker_perf, {started :: erlang:timestamp(),
                        processed = 0 :: non_neg_integer(),
                        failures = 0 :: non_neg_integer(),
                        work_time = 0 :: non_neg_integer(),
                        idle_time = 0 :: non_neg_integer(),
-                       last_time :: calendar:t_now()}).
+                       last_time :: erlang:timestamp()}).
 -record(worker, {pid :: pid(),
                  fitting :: #fitting{},
                  details :: #fitting_details{},
@@ -361,7 +361,7 @@ queue_work_wait(Ref, Index, VnodePid) ->
                        {undefined, undefined, undefined} ->
                            %% ownership finished changing before we asked
                            %% ... check if Next==Node?
-                           riak_core_ring:index_owner(Ring);
+                           riak_core_ring:index_owner(Ring, Index);
                        {_From, To, _Status} ->
                            %% ownership is still changing ... wait for
                            %% the future owner
@@ -369,6 +369,12 @@ queue_work_wait(Ref, Index, VnodePid) ->
                    end,
             %% monitor new vnode, since the input will be handled
             %% there, instead of at the vnode originally contacted
+
+            %% On review of this code path, while it's possible
+            %% rpc:call can return {badrpc, _} or throw an error
+            %% exit:_, the supervision tree for riak_pipe_vnode will
+            %% not try and restart the process, so a crash in this
+            %% case is safe.
             {ok, NextPid} = rpc:call(Next,
                                      riak_core_vnode_master,
                                      get_vnode_pid,
@@ -510,6 +516,9 @@ handle_command(Message, _Sender, State) ->
        | {forward, state()}.
 handle_handoff_command(?FOLD_REQ{}=Cmd, Sender, State) ->
     handoff_cmd_internal(Cmd, Sender, State);
+handle_handoff_command(#riak_core_fold_req_v1{}=Cmd, Sender, State) ->
+    handoff_cmd_internal(riak_core_util:make_newest_fold_req(Cmd),
+                         Sender, State);
 handle_handoff_command(#cmd_archive{}=Cmd, _Sender, State) ->
     archive_internal(Cmd, State);
 handle_handoff_command(#cmd_enqueue{fitting=F}=Cmd, Sender,
@@ -679,8 +688,8 @@ handle_info({'DOWN',_,process,Pid,_},
                           {vnode, {fitting_died, Partition}}),
                        %% if the fitting died, tear down its worker
                        erlang:unlink(Worker#worker.pid),
-                       riak_pipe_vnode_worker_sup:terminate_worker(
-                         WorkerSup, Worker#worker.pid),
+                       _ = riak_pipe_vnode_worker_sup:terminate_worker(
+                             WorkerSup, Worker#worker.pid),
                        remove_worker(Worker, State);
                    none ->
                        %% TODO: log this somewhere?
@@ -1094,8 +1103,8 @@ restart_worker(#worker{details=FD}=UnstatWorker,
             ?T(Worker#worker.details, [restart_fail],
                {vnode, {restart_fail, Partition, proplist_perf(Worker)}}),
             %% fail blockers, so they resubmit elsewhere
-            [ reply_to_blocker(Blocker, {error, worker_restart_fail})
-              || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
+            _ = [ reply_to_blocker(Blocker, {error, worker_restart_fail})
+                  || {_, Blocker, _} <- queue:to_list(Worker#worker.blocking) ],
             %% spin up a stub worker to forward the inputs
             %% (don't want to tie up the vnode doing this sending)
             {ok, FwdWorker} = new_fwd_worker(Worker#worker.details,
@@ -1118,7 +1127,7 @@ restart_worker(#worker{details=FD, q=Queue}=Worker,
     %% this was a forwarding worker for a failed-restart fitting; if
     %% it crashed, there's something *really* wrong - log the errors
     %% and dump it
-    [ ?T_ERR(FD, {restart_dropped, I}) || I <- queue:to_list(Queue) ],
+    _ = [ ?T_ERR(FD, {restart_dropped, I}) || I <- queue:to_list(Queue) ],
     if Worker#worker.inputs_done ->
             %% tell the fitting this worker has exited, so it doesn't
             %% hang around waiting
@@ -1142,7 +1151,7 @@ worker_error(Reason, #worker{details=FD}=Worker, State) ->
 
 %% @doc Reply to a request that has been waiting in a worker's blocked
 %%      queue.
--spec reply_to_blocker(term(), term()) -> true.
+-spec reply_to_blocker(term(), term()) -> any().
 reply_to_blocker(Blocker, Reply) ->
     riak_core_vnode:reply(Blocker, Reply).
 
