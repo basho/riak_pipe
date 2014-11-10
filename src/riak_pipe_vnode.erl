@@ -568,7 +568,7 @@ handoff_cancelled(#state{handoff=starting, workers_archiving=[]}=State) ->
     {ok, State#state{handoff=cancelled}}.
 
 %% @doc Note that handoff has completed.
--spec handoff_finished(node(), state()) -> {ok, state()}.
+-spec handoff_finished(handoff_dest(), state()) -> {ok, state()}.
 handoff_finished(_TargetNode, #state{handoff=resize}=State) ->
     %% in the case of resize there may be workers because we lie and
     %% don't really handoff anything
