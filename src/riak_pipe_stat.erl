@@ -25,7 +25,6 @@
 %% API
 -export([start_link /0, register_stats/0,
          get_stats/0,
-         produce_stats/0,
          update/1,
          stats/0]).
 
@@ -35,6 +34,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
+-define(PFX, riak_core_stat:prefix()).
 
 -type stat_type() :: counter | spiral.
 
@@ -46,24 +46,12 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    _ = [begin
-             StatName = stat_name(Name),
-             (catch folsom_metrics:delete_metric(StatName)),
-             ok = register_stat(StatName, Type)
-         end || {Name, Type} <- stats()],
-    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
+    riak_core_stat:register_stats(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-    case riak_core_stat_cache:get_stats(?APP) of
-        {ok, Stats, _TS} ->
-            Stats;
-        Error -> Error
-    end.
-
-produce_stats() ->
-    {?APP, riak_core_stat_q:get_stats([riak_pipe])}.
+    riak_core_stat:get_stats(?APP).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -102,12 +90,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
 do_update(create) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create}, 1, spiral),
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {inc, 1}, counter);
+    ok = exometer:update([?PFX, ?APP, pipeline, create], 1),
+    exometer:update([?PFX, ?APP, pipeline, active], 1);
 do_update(create_error) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, create, error}, 1, spiral);
+    exometer:update([?PFX, ?APP, pipeline, create, error], 1);
 do_update(destroy) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, pipeline, active}, {dec, 1}, counter).
+    exometer:update([?PFX, ?APP, pipeline, active], -1).
 
 %% -------------------------------------------------------------------
 %% Private
@@ -119,14 +107,3 @@ stats() ->
      {[pipeline, create, error], spiral},
      {[pipeline, active], counter}
     ].
-
--spec stat_name(riak_core_stat_q:path()) -> riak_core_stat_q:stat_name().
-stat_name(Name) when is_list(Name) ->
-    list_to_tuple([?APP] ++ Name).
-
--spec register_stat(riak_core_stat_q:stat_name(), stat_type()) -> 
-         ok | {error, Subject :: term(), Reason :: term()}.
-register_stat(Name, spiral) ->
-    folsom_metrics:new_spiral(Name);
-register_stat(Name, counter) ->
-    folsom_metrics:new_counter(Name).
