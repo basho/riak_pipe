@@ -37,6 +37,8 @@
 -define(PFX, riak_core_stat:prefix()).
 
 -type stat_type() :: counter | spiral.
+-type stat_options() :: [tuple()].
+-type stat_aliases() :: [{exometer:datapoint(), atom()}].
 
 %% -------------------------------------------------------------------
 %% API
@@ -100,10 +102,13 @@ do_update(destroy) ->
 %% -------------------------------------------------------------------
 %% Private
 %% -------------------------------------------------------------------
--spec stats() -> [{riak_core_stat_q:path(), stat_type()}].
+-spec stats() -> [{riak_core_stat_q:path(), stat_type(), stat_options(),
+		   stat_aliases()}].
 stats() ->
     [
-     {[pipeline, create], spiral},
-     {[pipeline, create, error], spiral},
-     {[pipeline, active], counter}
+     {[pipeline, create], spiral, [], [{count, pipeline_create_count},
+                                       {one, pipeline_create_one}]},
+     {[pipeline, create, error], spiral, [], [{count, pipeline_create_error_count},
+                                              {one, pipeline_create_error_one}]},
+     {[pipeline, active], counter, [], [{value, pipeline_active}]}
     ].
