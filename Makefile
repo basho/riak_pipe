@@ -4,9 +4,6 @@ REVISION	?= $(shell echo $(RIAK_TAG) | sed -e 's/^$(REPO)-//')
 PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
 PULSE_TESTS	 = reduce_fitting_pulse
 
-EXOMETER_PACKAGES = "(basic)"
-export EXOMETER_PACKAGES
-
 .PHONY: deps
 
 all: deps compile
