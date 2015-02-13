@@ -199,6 +199,12 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
     case lists:keytake(Ref, 2, Alive) of
         {value, {#fitting{pid=Pid}, Ref}, Rest} ->
             %% one of our fittings died
+            case Reason of
+                normal -> ok;
+                _ ->
+                    lager:warning("~p: Fitting worker ~p died. Reason: ~p",
+                                  [StateName, Pid, Reason])
+            end,
             maybe_shutdown(Reason,
                            StateName,
                            State#state{alive=Rest});
