@@ -6,3 +6,4 @@ deps/*
 erl_crash.dump
 EUnit-SASL.log
 .local_dialyzer_plt
+.rebar/

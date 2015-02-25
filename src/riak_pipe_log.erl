@@ -29,7 +29,12 @@
 
 -export_type([trace_filter/0]).
 
+-ifdef(namespaced_types).
+-type trace_filter() :: all | sets:set() | trace_compiled().
+-else.
 -type trace_filter() :: all | set() | trace_compiled().
+-endif.
+
 -type trace_compiled() :: ordsets:ordset(term()).
 
 %% @doc Log the given message, if logging is enabled, to the specified
