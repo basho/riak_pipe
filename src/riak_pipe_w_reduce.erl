@@ -89,7 +89,13 @@
 
 -include("riak_pipe.hrl").
 
--record(state, {accs :: dict(),
+-ifdef(namespaced_types).
+-type riak_pipe_w_reduce_dict() :: dict:dict().
+-else.
+-type riak_pipe_w_reduce_dict() :: dict().
+-endif.
+
+-record(state, {accs :: riak_pipe_w_reduce_dict(),
                 p :: riak_pipe_vnode:partition(),
                 fd :: riak_pipe_fitting:details()}).
 -opaque state() :: #state{}.
@@ -132,7 +138,7 @@ done(#state{accs=Accs, p=Partition, fd=FittingDetails}) ->
     ok.
 
 %% @doc The archive is just the store (dict()) of evaluation results.
--spec archive(state()) -> {ok, dict()}.
+-spec archive(state()) -> {ok, riak_pipe_w_reduce_dict()}.
 archive(#state{accs=Accs}) ->
     %% just send state of reduce so far
     {ok, Accs}.
@@ -141,7 +147,7 @@ archive(#state{accs=Accs}) ->
 %%      the same key are concatenated.  The reduce function is also
 %%      re-evaluated for the key, such that {@link done/1} still has
 %%      the correct value to send, even if no more inputs arrive.
--spec handoff(dict(), state()) -> {ok, state()}.
+-spec handoff(riak_pipe_w_reduce_dict(), state()) -> {ok, state()}.
 handoff(HandoffAccs, #state{accs=Accs}=State) ->
     %% for each Acc, add to local accs;
     NewAccs = dict:merge(fun(K, HA, A) ->

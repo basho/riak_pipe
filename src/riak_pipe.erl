@@ -80,6 +80,12 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-ifdef(namespaced_types).
+-type riak_pipe_dict() :: dict:dict().
+-else.
+-type riak_pipe_dict() :: dict().
+-endif.
+
 -export_type([pipe/0,
               fitting/0,
               fitting_spec/0,
@@ -495,7 +501,7 @@ status(#pipe{fittings=Fittings}) ->
 %% '''
 -spec invert_dict(fun((term(), term()) -> term()),
                   fun((term(), term()) -> term()),
-                  dict()) -> dict().
+                  riak_pipe_dict()) -> riak_pipe_dict().
 invert_dict(KeyFun, ValFun, Dict) ->
     dict:fold(
       fun(Key, Vals, DAcc) ->

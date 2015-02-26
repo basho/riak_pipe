@@ -29,7 +29,13 @@
 
 -export_type([trace_filter/0]).
 
--type trace_filter() :: all | set() | trace_compiled().
+-ifdef(namespaced_types).
+-type riak_pipe_log_set() :: sets:set().
+-else.
+-type riak_pipe_log_set() :: set().
+-endif.
+
+-type trace_filter() :: all | riak_pipe_log_set() | trace_compiled().
 -type trace_compiled() :: ordsets:ordset(term()).
 
 %% @doc Log the given message, if logging is enabled, to the specified
