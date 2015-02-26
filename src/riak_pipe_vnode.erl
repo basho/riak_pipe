@@ -55,6 +55,12 @@
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
 
+-ifdef(namespaced_types).
+-type riak_pipe_vnode_queue() :: queue:queue().
+-else.
+-type riak_pipe_vnode_queue() :: queue().
+-endif.
+
 -export_type([chashfun/0,
               chash/0,
               partition/0, %% from riak_core_vnode.hrl
@@ -92,14 +98,14 @@
                  details :: #fitting_details{},
                  state :: {working, term()} | waiting | init,
                  inputs_done :: boolean(),
-                 q :: queue(),
+                 q :: riak_pipe_vnode_queue(),
                  q_limit :: pos_integer(),
-                 blocking :: queue(),
+                 blocking :: riak_pipe_vnode_queue(),
                  handoff :: undefined | {waiting, term()},
                  perf :: #worker_perf{}}).
 -record(worker_handoff, {fitting :: #fitting{},
-                         queue :: queue(),
-                         blocking :: queue(),
+                         queue :: riak_pipe_vnode_queue(),
+                         blocking :: riak_pipe_vnode_queue(),
                          archive :: term()}).
 -record(handoff, {fold :: fun((Key::term(), Value::term(), Acc::term())
                               -> NewAcc::term()),
@@ -601,7 +607,7 @@ handle_handoff_data(Data, State) ->
 
 %% @doc Produce a binary representing the worker data to handoff.
 -spec encode_handoff_item(riak_pipe:fitting(),
-                          {queue(), queue(), term()}) ->
+                          {riak_pipe_vnode_queue(), riak_pipe_vnode_queue(), term()}) ->
          binary().
 encode_handoff_item(Fitting, {Queue, Blocking, Archive}) ->
     term_to_binary(#worker_handoff{fitting=Fitting,
@@ -885,7 +891,8 @@ add_input(#worker{q=Q, q_limit=QL, blocking=Blocking}=Worker,
 
 %% @doc Merge the worker on this vnode with the worker from another
 %%      vnode.  (The grungy part of {@link handle_handoff_data/2}.)
--spec handoff_worker(#worker{}, queue(), queue(), Archive::term()) ->
+-spec handoff_worker(#worker{}, riak_pipe_vnode_queue(),
+                     riak_pipe_vnode_queue(), Archive::term()) ->
           #worker{}.
 handoff_worker(#worker{q=Q, blocking=Blocking}=Worker,
                HandoffQ, HandoffBlocking, HandoffState) ->
