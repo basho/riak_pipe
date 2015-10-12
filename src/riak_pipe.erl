@@ -97,7 +97,7 @@
 -type exec_option() :: {sink, fitting()}
                      | {sink_type, riak_pipe_sink:sink_type()}
                      | {trace, list() | riak_pipe_log:trace_filter()}
-                     | {log, sink | sasl}.
+                     | {log, sink | {sink, term()} | lager | sasl}.
 -type stat() :: {atom(), term()}.
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
