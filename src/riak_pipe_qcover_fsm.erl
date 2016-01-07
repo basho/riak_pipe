@@ -59,6 +59,7 @@ init(From, [#pipe{fittings=[{_Name, Fitting}|_]}, Input, NVal]) ->
      riak_pipe,              %% NodeCheckService
      riak_pipe_vnode_master, %% VNodeMaster
      infinity,               %% Timeout
+     riak_core_coverage_plan, %% Module for coverage plans
      #state{from=From}}.     %% State
 
 process_results(ok, State) ->
