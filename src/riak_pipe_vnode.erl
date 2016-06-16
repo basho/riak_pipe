@@ -354,7 +354,7 @@ queue_work_wait(Ref, Index, VnodePid) ->
         {Ref, Reply} ->
             erlang:demonitor(MonRef),
             Reply;
-        {'DOWN',MonRef,process,VnodePid,normal} ->
+        {'DOWN', MonRef, process, VnodePid, Reason} when (Reason =:= normal); (Reason =:= noproc) ->
             %% the vnode likely just shut down after completing handoff
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             Next = case riak_core_ring:next_owner(Ring, Index) of
