@@ -58,11 +58,11 @@ pipeline(C, Pipe) ->
         {ok, Fits} ->
             cluster_info:format(C, " - ~p fittings: ~b alive~n",
                                 [Pipe, length(Fits)]),
-            [ fitting(C, Fit) || Fit <- Fits ];
+            _ = [ fitting(C, Fit) || Fit <- Fits ],
+            ok;
         gone ->
             cluster_info:format(C, " - ~p *gone*~n", [Pipe])
-    end,
-    ok.
+    end.
 
 %% @doc Print information about the given fitting.
 %%      The pid given should be that of the fitting.
@@ -73,11 +73,11 @@ fitting(C, Fit) ->
             %% TODO: add 'name' from details? maybe module/etc. too?
             cluster_info:format(C, "   + ~p worker partitions: ~b~n",
                                 [Fit, length(Workers)]),
-            [ fitting_worker(C, W) || W <- Workers ];
+            _ = [ fitting_worker(C, W) || W <- Workers ],
+            ok;
         gone ->
             cluster_info:format(C, "   + ~p *gone*~n", [Fit])
-    end,
-    ok.
+    end.
 
 %% @doc Print the ring partition index of a vnode doing work for some
 %%      fitting.  The `Worker' should be the index to print.
