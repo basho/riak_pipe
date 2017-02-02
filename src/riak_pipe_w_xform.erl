@@ -82,5 +82,4 @@ done(_State) ->
 validate_arg(Fun) when is_function(Fun) ->
     riak_pipe_v:validate_function("arg", 3, Fun);
 validate_arg(Fun) ->
-    {error, io_lib:format("~p requires a function as argument, not a ~p",
-                          [?MODULE, riak_pipe_v:type_of(Fun)])}.
+    {error, io_lib:format("~p requires a function as argument, but got: ~p", [?MODULE, Fun])}.

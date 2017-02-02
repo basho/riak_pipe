@@ -556,22 +556,15 @@ validate_nval({Mod, Fun}) when is_atom(Mod), is_atom(Fun) ->
     riak_pipe_v:validate_function("nval", 1, {Mod, Fun});
 validate_nval(NVal) ->
     {error, io_lib:format(
-              "expected a positive integer,"
-              " or a function or {Mod, Fun} of arity 1; not a ~p",
-              [riak_pipe_v:type_of(NVal)])}.
+              "expected a positive integer, or a function, or {Mod, Fun} of arity 1; got ~p",
+              [NVal])}.
 
 %% @doc Validate the q_limit parameter.  This must be a positive integer.
 -spec validate_q_limit(term()) -> ok | {error, string()}.
-validate_q_limit(QLimit) when is_integer(QLimit) ->
-    if QLimit > 0 -> ok;
-       true ->
-            {error, io_lib:format(
-                      "expected a positive integer, found ~p", [QLimit])}
-    end;
+validate_q_limit(QLimit) when is_integer(QLimit), QLimit > 0 ->
+    ok;
 validate_q_limit(QLimit) ->
-    {error, io_lib:format(
-              "expected a positive integer, not a ~p",
-              [riak_pipe_v:type_of(QLimit)])}.
+    {error, io_lib:format("expected a positive integer, but got: ~p", [QLimit])}.
 
 %% @doc Coerce a fitting name into a printable string.
 -spec format_name(term()) -> iolist().

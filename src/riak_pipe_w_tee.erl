@@ -74,7 +74,5 @@ done(_State) ->
 validate_arg(sink)   -> ok;
 validate_arg(#fitting{}) -> ok;
 validate_arg(Other) ->
-    {error, io_lib:format("~p requires a fitting record,"
-                          " or the atom 'sink'"
-                          " as its argument, not a ~p",
-                          [?MODULE, riak_pipe_v:type_of(Other)])}.
+    {error, io_lib:format("~p requires a fitting record, or the atom 'sink'"
+                          " as its argument, but instead got: ~p", [?MODULE, Other])}.

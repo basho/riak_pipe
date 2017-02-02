@@ -23,8 +23,7 @@
 -module(riak_pipe_v).
 
 -export([validate_module/2,
-         validate_function/3,
-         type_of/1]).
+         validate_function/3]).
 
 %% @doc Validate that `Module' is an atom that names a loaded or
 %%      loadable module.  If a module is already loaded under that
@@ -43,8 +42,8 @@ validate_module(Label, Module) when is_atom(Module) ->
                       [Label, Module, Error])}
     end;
 validate_module(Label, Module) ->
-    {error, io_lib:format("~s must be an atom, not a ~p",
-                          [Label, type_of(Module)])}.
+    {error, io_lib:format("~s expected an atom, got: ~p",
+                          [Label, Module])}.
 
 %% @doc Validate that `Fun' is a function of arity `Arity'.
 %%
@@ -80,13 +79,11 @@ validate_function(Label, Arity, Fun) when is_function(Fun) ->
                       Label, Arity, Module, Function)
             end;
         N ->
-            {error, io_lib:format("~s must be of arity ~b, not ~b",
-                                  [Label, Arity, N])}
+            {error, io_lib:format("~s must be of arity ~b, not ~b", [Label, Arity, N])}
     end;
 validate_function(Label, Arity, Fun) ->
-    {error, io_lib:format(
-              "~s must be a function or {Mod, Fun} (arity ~b), not a ~p",
-              [Label, Arity, type_of(Fun)])}.
+    {error, io_lib:format("~s must be a function or {Mod, Fun} (arity ~b), but instead got: ~p",
+                          [Label, Arity, Fun])}.
 
 %% @doc Validate an exported function.  See {@link validate_function/3}.
 -spec validate_exported_function(string(), integer(), atom(), atom()) ->
@@ -106,21 +103,4 @@ validate_exported_function(Label, Arity, Module, Function) ->
         {error,Error} ->
             {error, io_lib:format("invalid module named in ~s function:~n~s",
                                   [Label, Error])}
-    end.
-
-%% @doc Determine the type of a term.  For example:
-%% ```
-%% number = riak_pipe_v:type_of(1).
-%% atom = riak_pipe_v:type_of(a).
-%% pid = riak_pipe_v:type_of(self()).
-%% function = riak_pipe_v:type_of(fun() -> ok end).
-%% '''
--spec type_of(term()) -> pid | reference | list | tuple | atom
-                       | number | binary | function.
-type_of(Term) ->
-    case erl_types:t_from_term(Term) of
-        {c,identifier,[Type|_],_} ->
-            Type; % pid,reference
-        {c,Type,_,_} ->
-            Type  % list,tuple,atom,number,binary,function
     end.
