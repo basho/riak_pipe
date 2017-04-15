@@ -25,7 +25,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 %% ===================================================================
 %% Application callbacks
@@ -56,7 +56,20 @@ start(_StartType, _StartArgs) ->
             {error, Reason}
     end.
 
+%% @doc Prepare to stop - called before the supervisor tree is shutdown
+prep_stop(_State) ->
+    try %% wrap with a try/catch - application carries on regardless,
+        %% no error message or logging about the failure otherwise.
+        lager:info("Stopping application riak_pipe - marked service down.\n", []),
+        riak_core_node_watcher:service_down(riak_pipe)
+    catch
+        Type:Reason ->
+            lager:error("Stopping application riak_pipe - ~p:~p.\n", [Type, Reason])
+    end,
+    stopping.
+
 %% @doc Unused.
 -spec stop(term()) -> ok.
 stop(_State) ->
+    lager:info("Stopped  application riak_pipe.\n", []),
     ok.
