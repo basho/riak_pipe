@@ -178,7 +178,7 @@ in =include/riak_pipe.hrl=.
 
 #+BEGIN_SRC erlang
 #fitting_spec {
-   name = foo, %% term(), anything to help you help you find results
+   name = foo, %% term(), anything to help you find results
                %% and log output from this fitting
 
    module = riak_pipe_w_pass, %% atom(), must be a valid module name,
