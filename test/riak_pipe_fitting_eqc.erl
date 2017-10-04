@@ -132,7 +132,7 @@ gather_output({_, {Last, S}, _}, Setup) ->
     end,
     {ok, SMsgs} = get_sink_msgs(Setup#setup.sink),
     VMsgs = [get_vnode_msgs(V) || V <- S#state.vnodes],
-    %%[begin unlink(V), exit(V, kill) end || V <- S#state.vnodes],
+    [begin unlink(V), exit(V, kill) end || V <- S#state.vnodes],
     #output{sink=SMsgs,
             vnodes=VMsgs}.
 
