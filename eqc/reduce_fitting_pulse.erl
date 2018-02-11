@@ -22,8 +22,8 @@
 %% behavior, possibly related to github issues 48 and 49.
 -module(reduce_fitting_pulse).
 
--include("riak_pipe.hrl").
--include("riak_pipe_log.hrl").
+-include("include/riak_pipe.hrl").
+-include("include/riak_pipe_log.hrl").
 
 -behaviour(riak_pipe_vnode_worker).
 -ifdef(EQC).
@@ -98,39 +98,43 @@ maybe_send_output({Partition, #fitting_details{arg=Arg}=Details}) ->
 %% Although only a small corner provoked failures, such coverage may
 %% be useful when making changes in the future, so it's staying in.
 prop_fitting_dies_normal() ->
-    ?FORALL({Seed, Trace, Output, SinkType,
-             {Eoi, Destroy, AlsoDestroySink, ExitPoint}},
-            {pulse:seed(), bool(), bool(), oneof([fsm, raw]),
-             ?LET({Eoi, Destroy},
-                  {bool(), bool()},
-                  {Eoi, Destroy,
-                   %% to mimick riak_kv HTTP&PB endpoints, we only
-                   %% destroy the sink if we also destroy the pipe
-                   oneof([Destroy, false]),
-                   oneof([before_eoi]
-                         %% can't exit after eoi if there's no eoi
-                         ++ [ after_eoi || Eoi]
-                         %% similarly for destroy
-                         ++ [ after_destroy || Destroy]
-                         %% and "never" exiting requires at least one of
-                         %% eoi or destroy, or the test will hang
-                         ++ [ never || Eoi or Destroy])})},
+    ?SETUP(fun() ->
+                   pulse:start(),
+                   fun() -> pulse:stop() end
+           end,
+           ?FORALL({Seed, Trace, Output, SinkType,
+                    {Eoi, Destroy, AlsoDestroySink, ExitPoint}},
+                   {pulse:seed(), bool(), bool(), oneof([fsm, raw]),
+                    ?LET({Eoi, Destroy},
+                         {bool(), bool()},
+                         {Eoi, Destroy,
+                          %% to mimick riak_kv HTTP&PB endpoints, we only
+                          %% destroy the sink if we also destroy the pipe
+                          oneof([Destroy, false]),
+                          oneof([before_eoi]
+                                %% can't exit after eoi if there's no eoi
+                                ++ [ after_eoi || Eoi]
+                                %% similarly for destroy
+                                ++ [ after_destroy || Destroy]
+                                %% and "never" exiting requires at least one of
+                                %% eoi or destroy, or the test will hang
+                                ++ [ never || Eoi or Destroy])})},
 
-            %% this is a gigantic table to collect, but useful to see anyway
-            collect({Trace, Output, SinkType,
-                     Eoi, Destroy, AlsoDestroySink, ExitPoint},
+                   %% this is a gigantic table to collect, but useful to see anyway
+                   collect({Trace, Output, SinkType,
+                            Eoi, Destroy, AlsoDestroySink, ExitPoint},
 
-            begin
-                ExitReasons =
-                    fitting_exit_reason(
-                      Seed, Trace, Output, SinkType,
-                      Eoi, Destroy, AlsoDestroySink, ExitPoint),
-                ?WHENFAIL(
-                   io:format(user, "Exit Reasons: ~p~n", [ExitReasons]),
-                   exit_reason_is_normalish(
-                     proplists:get_value(fitting, ExitReasons)) andalso
-                   proplists:get_value(client, ExitReasons) == ExitPoint)
-            end)).
+                           begin
+                               ExitReasons =
+                               fitting_exit_reason(
+                                 Seed, Trace, Output, SinkType,
+                                 Eoi, Destroy, AlsoDestroySink, ExitPoint),
+                               ?WHENFAIL(
+                                  io:format(user, "Exit Reasons: ~p~n", [ExitReasons]),
+                                  exit_reason_is_normalish(
+                                    proplists:get_value(fitting, ExitReasons)) andalso
+                                  proplists:get_value(client, ExitReasons) == ExitPoint)
+                           end))).
 
 exit_reason_is_normalish(normal) ->
     %% the fitting chose to exit on its own
@@ -313,23 +317,3 @@ maybe_exit(Now, Now) ->
     exit(Now);
 maybe_exit(_Now, _NotNow) -> 
     ok.
-
--ifdef(PULSE).
-
-%% these tests are not interesting without pulse enabled
-death_test_() ->
-    {setup,
-        fun() ->
-                pulse:start()
-        end,
-        fun(_) ->
-                pulse:stop()
-        end,
-     {timeout, 60,
-        [
-         ?_assert(eqc:quickcheck(
-                    eqc:testing_time(55, prop_fitting_dies_normal())))
-        ]}
-    }.
-
--endif.
