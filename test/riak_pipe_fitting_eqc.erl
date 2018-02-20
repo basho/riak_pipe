@@ -41,7 +41,8 @@
 -record(setup, {
           builder :: pid(),
           sink :: #fitting{},
-          fitting :: #fitting{}
+          fitting :: #fitting{},
+          fitting_mon :: pid()
          }).
 
 -type sink_result() :: {ok, Messages::list()}
@@ -83,19 +84,22 @@ prop_eoi() ->
                 try
                     Result = run_commands(?MODULE, Cmds,
                                           [{fitting, Setup#setup.fitting}]),
+
                     Output = gather_output(Result, Setup),
                     aggregate(zip(state_names(element(1, Result)),
                                   command_names(Cmds)),
                     ?WHENFAIL(
-                       print_helpful(Result, Output),
+                       print_helpful(Result, Output, Setup),
                        check_result(Result, Output, Setup)))
                 after
                     cleanup_fitting(Setup)
                 end
             end).
 
-print_helpful({_,{Last,_},R}, Output) ->
-    io:format("R: ~p~nLast: ~p~nSink: ~p~nVnodes: ~p~n",
+print_helpful({_,{Last,_},R}, Output, Setup) ->
+    FittingStatus = fitting_is_alive(Setup),
+    io:format("fitting ~p~n", [FittingStatus]),
+    io:format("Reason: ~p~nLast: ~p~nSink: ~p~nVnodes: ~p~n",
               [R, Last, Output#output.sink, Output#output.vnodes]).
 
 %% @doc start a builder and sink for support, then start the fitting
@@ -108,9 +112,13 @@ setup_fitting() ->
     Options = [],
     {ok, _Pid, Fitting} = riak_pipe_fitting:start_link(
                             Builder, Spec, SinkFitting, Options),
+
+    Pid = monitor_fitting_pid(Fitting),
+
     #setup{builder=Builder,
            sink=SinkFitting,
-           fitting=Fitting}.
+           fitting=Fitting,
+           fitting_mon=Pid}.
 
 %% @doc ask the sink and the vnodes for all messages they have received
 gather_output({_, {Last, S}, _}, Setup) ->
@@ -124,6 +132,7 @@ gather_output({_, {Last, S}, _}, Setup) ->
     end,
     {ok, SMsgs} = get_sink_msgs(Setup#setup.sink),
     VMsgs = [get_vnode_msgs(V) || V <- S#state.vnodes],
+    [begin unlink(V), exit(V, kill) end || V <- S#state.vnodes],
     #output{sink=SMsgs,
             vnodes=VMsgs}.
 
@@ -143,25 +152,34 @@ check_result({_,{stopping,_},R}, Output, Setup) ->
         end,
     %% test must have finished ok
     ok == R andalso
-        %% sink must have recevied an eoi
+    %% sink must have recevied an eoi
         lists:member(Eoi, Output#output.sink) andalso
         lists:all(IfDetailsAlsoEoi, Output#output.vnodes);
 check_result({_,{running,_},R}, Output, Setup) ->
     %% if the test did not decide to transition from running to
     %% stopping (it never sent eoi to the fitting)...
     %% (is this part of the test useful?)
-    FittingAlive = fitting_is_alive(Setup#setup.fitting),
+
+    {FittingAlive, FittingStatus} = fitting_is_alive(Setup),
     NoVnodeMessages = fun({ok, _, M}) -> [] == M;
                          (_)          -> false
                       end,
     %% test must have finished ok
-    ok == R andalso
-        %% the fitting process must still be running
-        FittingAlive andalso
-        %% the sink must have received nothing
-        [] == Output#output.sink andalso
-        %% the vnodes must have received nothing
-        lists:all(NoVnodeMessages, Output#output.vnodes).
+    case (ok == R andalso
+          %% the fitting process must still be running
+          FittingAlive andalso
+          %% the sink must have received nothing
+          [] == Output#output.sink andalso
+          %% the vnodes must have received nothing
+          lists:all(NoVnodeMessages, Output#output.vnodes)) of
+        true -> true;
+        false ->
+            {{result_ok, R==ok},
+             {fitting_alive, FittingAlive, FittingStatus},
+             {sink_no_recv, Output#output.sink==[]},
+             {vnode_no_recv, lists:all(NoVnodeMessages, Output#output.vnodes)}
+            }
+    end.
 
 %% tear down all of our processes
 cleanup_fitting(Setup) ->
@@ -205,9 +223,19 @@ next_state_data(_,_,S,_,_) ->
     S.
 
 postcondition(_, _, _, {call,?MODULE,start_vnode,_}, R) ->
-    is_pid(R);
+    case is_pid(R) of
+        true ->
+            true;
+        false ->
+            {?MODULE, start_vnode, result, not_pid, R}
+    end;
 postcondition(_, _, _, {call,riak_pipe_fitting,eoi,_}, R) ->
-    ok == R;
+    case(R) of
+        ok ->
+            true;
+        Other ->
+            {riak_pipe_fitting, eoi, result, not_ok, Other}
+    end;
 postcondition(_, _, _, _, _) ->
     true.
 
@@ -259,8 +287,36 @@ wait_for_fitting_exit(#fitting{pid=Pid}) ->
             ok
     end.
 
-fitting_is_alive(#fitting{pid=Pid}) ->
-    lists:member(Pid, erlang:processes()).
+monitor_fitting_pid(#fitting{pid=Pid}) ->
+    case is_process_alive(Pid) of
+        true ->
+            MonRef = erlang:monitor(process, Pid),
+            spawn_link(?MODULE, fitting_monitor, [MonRef, Pid, true]);
+        false ->
+            exit(no_fitting_pid)
+    end.
+
+fitting_monitor(Ref, Pid, Down) ->
+    receive
+        {'DOWN', Ref, process, Pid, Reason} ->
+            fitting_monitor(Ref, Pid, Reason);
+        {From, status}  ->
+            From ! {self(), Down},
+            fitting_monitor(Ref, Pid, Down)
+    end.
+
+fitting_is_alive(#setup{fitting_mon=Pid}) ->
+    Pid ! {self(), status},
+    FittingAlive = receive
+                        {Pid, Down} ->
+                            Down
+                    end,
+    case FittingAlive of
+        true ->
+            {true, alive};
+        Other ->
+            {false, Other}
+    end.
 
 start_vnode(#fitting{}=F) ->
     P = spawn_link(?MODULE, fake_vnode, [F, self()]),
