@@ -8,4 +8,5 @@ EUnit-SASL.log
 .local_dialyzer_plt
 .rebar/
 .rebar3
+rebar.lock
 _build
