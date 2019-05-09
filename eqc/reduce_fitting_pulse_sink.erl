@@ -35,7 +35,7 @@
 -compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
 -endif.
 
--include("riak_pipe.hrl").
+-include("include/riak_pipe.hrl").
 
 -behaviour(gen_fsm).
 

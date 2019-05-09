@@ -680,7 +680,7 @@ example_tick(TickLen, BatchSize, NumTicks, ChainLen) ->
     {ok, Pipe} = riak_pipe:exec(Specs, [{log, sink},
                                         {trace, all}]),
     _ = [begin
-             _ = [ok = riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, now()})
+             _ = [ok = riak_pipe:queue_work(Pipe, {tick, {TickSeq, X}, os:timestamp()})
                   || X <- lists:seq(1, BatchSize)],
              if TickSeq /= NumTicks -> timer:sleep(TickLen);
                 true                -> ok
