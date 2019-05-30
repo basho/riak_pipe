@@ -11,7 +11,7 @@
           fitting :: #fitting{},
           name :: term(),
           module :: atom(),
-          arg :: term(),
+          arg :: term() | undefined,
           output :: #fitting{},
           options :: riak_pipe:exec_opts(),
           q_limit :: pos_integer()
