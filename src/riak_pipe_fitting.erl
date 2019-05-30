@@ -454,8 +454,7 @@ validate_fitting(#fitting_spec{name=Name,
                                module=Module,
                                arg=Arg,
                                chashfun=HashFun,
-                               nval=NVal,
-                               q_limit=QLimit}) ->
+                               nval=NVal}) ->
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
@@ -487,14 +486,6 @@ validate_fitting(#fitting_spec{name=Name,
               "Invalid nval in fitting spec \"~s\": ~s",
               [format_name(Name), NVError]),
             throw({badarg, Name, NVError})
-    end,
-    case validate_q_limit(QLimit) of
-        ok -> ok;
-        {error, QLError} ->
-            lager:error(
-              "Invalid q_limit in fitting spec \"~s\": ~s",
-              [format_name(Name), QLError]),
-            throw({badarg, Name, QLimit})
     end;
 validate_fitting(Other) ->
     lager:error(
@@ -559,19 +550,6 @@ validate_nval(NVal) ->
               "expected a positive integer,"
               " or a function or {Mod, Fun} of arity 1; not a ~p",
               [riak_pipe_v:type_of(NVal)])}.
-
-%% @doc Validate the q_limit parameter.  This must be a positive integer.
--spec validate_q_limit(term()) -> ok | {error, string()}.
-validate_q_limit(QLimit) when is_integer(QLimit) ->
-    if QLimit > 0 -> ok;
-       true ->
-            {error, io_lib:format(
-                      "expected a positive integer, found ~p", [QLimit])}
-    end;
-validate_q_limit(QLimit) ->
-    {error, io_lib:format(
-              "expected a positive integer, not a ~p",
-              [riak_pipe_v:type_of(QLimit)])}.
 
 %% @doc Coerce a fitting name into a printable string.
 -spec format_name(term()) -> iolist().
