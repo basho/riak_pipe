@@ -1,9 +1,9 @@
 -record(fitting,
         {
           pid :: pid(),
-          ref :: reference(),
-          chashfun :: riak_pipe_vnode:chashfun(),
-          nval :: riak_pipe_vnode:nval()
+          ref :: reference() | undefined,
+          chashfun :: riak_pipe_vnode:chashfun() |undefined,
+          nval :: riak_pipe_vnode:nval() | undefined
         }).
 
 -record(fitting_details,
