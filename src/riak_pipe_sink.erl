@@ -43,7 +43,7 @@
 
 -export_type([sink_type/0]).
 -type sink_type() :: raw
-                   | {fsm, Period::timeout(), Timeout::timeout()}.
+                   | {fsm, Period::integer(), Timeout::timeout()}.
 
 %% @doc Send a result to the sink (used by worker processes).  The
 %%      result is delivered as a `#pipe_result{}' record in the sink
