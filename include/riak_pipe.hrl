@@ -21,7 +21,7 @@
         {
           name :: term(),
           module :: atom(),
-          arg :: term(),
+          arg :: term() |undefined,
           chashfun = {chash, key_of} :: riak_pipe_vnode:chashfun(),
           nval = 1 :: riak_pipe_vnode:nval(),
           q_limit = 64 :: pos_integer()
