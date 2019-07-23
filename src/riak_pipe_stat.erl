@@ -24,7 +24,8 @@
 
 %% API
 -export([start_link /0, register_stats/0,
-         get_stats/0,
+         get_stats/0, get_stats_status/0, get_stats_info/0,
+         get_stats_values/0, get_stat/1,
          update/1,
          stats/0]).
 
@@ -53,7 +54,19 @@ register_stats() ->
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-    riak_core_stat:get_stats(?APP).
+    riak_stat:get_app_stats(?APP).
+
+get_stats_status() ->
+  riak_stat:get_stats_status(?APP).
+
+get_stats_info() ->
+  riak_stat:get_stats_info(?APP).
+
+get_stats_values() ->
+  riak_stat:get_stats_values(?APP).
+
+get_stat(Stat) ->
+  riak_stat:get_value(Stat).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
