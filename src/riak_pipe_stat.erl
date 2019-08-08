@@ -24,7 +24,7 @@
 
 %% API
 -export([start_link /0, register_stats/0,
-         get_stats/0, get_stats_status/0, get_stats_info/0,
+         get_stats/0, get_stats_info/0,
          get_stats_values/0, get_stat/1,
          update/1,
          stats/0]).
@@ -35,7 +35,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
--define(PFX, riak_stat:prefix()).
+-define(PFX, riak_core_stat_admin:prefix()).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
@@ -49,24 +49,21 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-  riak_stat:register(?APP, stats()).
+  riak_core_stat_admin:register(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-    riak_stat:get_app_stats(?APP).
-
-get_stats_status() ->
-  riak_stat:get_stats_status(?APP).
+  riak_core_stat_admin:get_app_stats(?APP).
 
 get_stats_info() ->
-  riak_stat:get_stats_info(?APP).
+  riak_core_stat_admin:get_stats_info(?APP).
 
 get_stats_values() ->
-  riak_stat:get_stats_values(?APP).
+  riak_core_stat_admin:get_stats_values(?APP).
 
 get_stat(Stat) ->
-  riak_stat:get_value(Stat).
+  riak_core_stat_admin:get_stat_value(Stat).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -127,4 +124,4 @@ stats() ->
     ].
 
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
