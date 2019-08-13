@@ -24,9 +24,9 @@
 
 %% API
 -export([start_link /0, register_stats/0,
-         get_stats/0, get_stats_info/0,
-         get_stats_values/0, get_stat/1,
-         update/1,
+         get_stats/0, get_info/0,
+         get_value/0, get_stat/1,
+         update/1, aggregate/2,
          stats/0]).
 
 %% gen_server callbacks
@@ -54,16 +54,23 @@ register_stats() ->
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-  riak_core_stat_admin:get_app_stats(?APP).
+  riak_core_stat_admin:get_stats(?APP).
 
-get_stats_info() ->
-  riak_core_stat_admin:get_stats_info(?APP).
+get_info() ->
+  riak_core_stat_admin:get_info(?APP).
 
-get_stats_values() ->
-  riak_core_stat_admin:get_stats_values(?APP).
+get_value() ->
+  riak_core_stat_admin:get_value(?APP).
 
 get_stat(Stat) ->
-  riak_core_stat_admin:get_stat_value(Stat).
+  riak_core_stat_admin:get_stat(Stat).
+
+%% -------------------------------------------------------------------
+
+aggregate(Stats, DPs) ->
+  riak_core_stat_admin:aggregate(Stats, DPs).
+
+%% -------------------------------------------------------------------
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
