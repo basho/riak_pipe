@@ -35,7 +35,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
--define(PFX, riak_core_stat_admin:prefix()).
+-define(PFX, riak_stat:prefix()).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
@@ -49,26 +49,26 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-  riak_core_stat_admin:register(?APP, stats()).
+  riak_stat:register(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-  riak_core_stat_admin:get_stats(?APP).
+  get_stat(?APP).
 
 get_info() ->
-  riak_core_stat_admin:get_info(?APP).
+  riak_stat:get_info(?APP).
 
 get_value() ->
-  riak_core_stat_admin:get_value(?APP).
+  riak_stat:get_value(?APP).
 
 get_stat(Stat) ->
-  riak_core_stat_admin:get_stat(Stat).
+  riak_stat:get_stats(Stat).
 
 %% -------------------------------------------------------------------
 
 aggregate(Stats, DPs) ->
-  riak_core_stat_admin:aggregate(Stats, DPs).
+  riak_stat:aggregate(Stats, DPs).
 
 %% -------------------------------------------------------------------
 
@@ -131,4 +131,4 @@ stats() ->
     ].
 
 update(Name, IncrBy, Type) ->
-  riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
