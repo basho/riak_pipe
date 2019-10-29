@@ -154,6 +154,7 @@
 
 -include("riak_pipe.hrl").
 -include("riak_pipe_log.hrl").
+-include("stacktrace.hrl").
 
 -record(state, {partition :: riak_pipe_vnode:partition(),
                 details :: riak_pipe_fitting:details(),
@@ -473,7 +474,7 @@ processing_error(Type, Error, FD, ModState, Module, State, Input) ->
                 {error, Error},
                 {input, Input},
                 {modstate, ModState},
-                {stack, erlang:get_stacktrace()}]).
+                {stack, ?_current_stacktrace_()}]).
 
 %% @doc Process a done (end-of-inputs) message - call the implementing
 %%      module's `done/1' function.
