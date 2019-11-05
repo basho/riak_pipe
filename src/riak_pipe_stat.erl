@@ -26,7 +26,7 @@
 -export([start_link /0, register_stats/0,
          get_stats/0, get_info/0,
          get_value/0, get_stat/1,
-         update/1, aggregate/2,
+         update/1,
          stats/0]).
 
 %% gen_server callbacks
@@ -64,11 +64,6 @@ get_value() ->
 
 get_stat(Stat) ->
   riak_stat:get_stats(Stat).
-
-%% -------------------------------------------------------------------
-
-aggregate(Stats, DPs) ->
-  riak_stat:aggregate(Stats, DPs).
 
 %% -------------------------------------------------------------------
 
