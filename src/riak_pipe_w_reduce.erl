@@ -88,6 +88,7 @@
 -export([chashfun/1]).
 
 -include("riak_pipe.hrl").
+-include("stacktrace.hrl").
 
 -ifdef(namespaced_types).
 -type riak_pipe_w_reduce_dict() :: dict:dict().
@@ -179,8 +180,8 @@ reduce(Key, InAcc, #state{p=Partition, fd=FittingDetails}) ->
         {ok, OutAcc} = Fun(Key, InAcc, Partition, FittingDetails),
         true = is_list(OutAcc), %%TODO: nicer error
         {ok, OutAcc}
-    catch Type:Error ->
-            {error, {Type, Error, erlang:get_stacktrace()}}
+    catch ?_exception_(Type, Error, StackToken) ->
+            {error, {Type, Error, ?_get_stacktrace_(StackToken)}}
     end.
 
 %% @doc Check that the arg is a valid arity-4 function.  See {@link

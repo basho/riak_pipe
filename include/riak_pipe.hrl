@@ -1,9 +1,9 @@
 -record(fitting,
         {
           pid :: pid(),
-          ref :: reference(),
-          chashfun :: riak_pipe_vnode:chashfun(),
-          nval :: riak_pipe_vnode:nval()
+          ref :: reference() | undefined,
+          chashfun :: riak_pipe_vnode:chashfun() |undefined,
+          nval :: riak_pipe_vnode:nval() | undefined
         }).
 
 -record(fitting_details,
@@ -11,7 +11,7 @@
           fitting :: #fitting{},
           name :: term(),
           module :: atom(),
-          arg :: term(),
+          arg :: term() | undefined,
           output :: #fitting{},
           options :: riak_pipe:exec_opts(),
           q_limit :: pos_integer()
@@ -21,7 +21,7 @@
         {
           name :: term(),
           module :: atom(),
-          arg :: term(),
+          arg :: term() |undefined,
           chashfun = {chash, key_of} :: riak_pipe_vnode:chashfun(),
           nval = 1 :: riak_pipe_vnode:nval(),
           q_limit = 64 :: pos_integer()
