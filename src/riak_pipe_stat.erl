@@ -24,7 +24,8 @@
 
 %% API
 -export([start_link /0, register_stats/0,
-         get_stats/0,
+         get_stats/0, get_info/0,
+         get_value/0, get_stat/1,
          update/1,
          stats/0]).
 
@@ -34,7 +35,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
--define(PFX, riak_core_stat:prefix()).
+-define(PFX, riak_stat:prefix()).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
@@ -48,12 +49,23 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    riak_core_stat:register_stats(?APP, stats()).
+  riak_stat:register(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-    riak_core_stat:get_stats(?APP).
+  get_stat(?APP).
+
+get_info() ->
+  riak_stat:get_info(?APP).
+
+get_value() ->
+  riak_stat:get_value(?APP).
+
+get_stat(Stat) ->
+  riak_stat:get_stats(Stat).
+
+%% -------------------------------------------------------------------
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -92,12 +104,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
 do_update(create) ->
-    ok = exometer:update([?PFX, ?APP, pipeline, create], 1),
-    exometer:update([?PFX, ?APP, pipeline, active], 1);
+  ok = update([pipeline, create], 1, spiral),
+  update([pipeline, active], 1, counter);
 do_update(create_error) ->
-    exometer:update([?PFX, ?APP, pipeline, create, error], 1);
+  update([pipeline, create, error], 1, spiral);
 do_update(destroy) ->
-    exometer:update([?PFX, ?APP, pipeline, active], -1).
+  update([pipeline, active], -1, counter).
 
 %% -------------------------------------------------------------------
 %% Private
@@ -112,3 +124,6 @@ stats() ->
                                               {one, pipeline_create_error_one}]},
      {[pipeline, active], counter, [], [{value, pipeline_active}]}
     ].
+
+update(Name, IncrBy, Type) ->
+  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
