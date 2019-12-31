@@ -19,7 +19,7 @@
 %%
 %% @doc Collector for various pipe stats.
 -module(riak_pipe_stat).
-
+-include_lib("riak_core/include/riak_stat.hrl").
 -behaviour(gen_server).
 
 %% API
@@ -35,7 +35,6 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
--define(PFX, riak_stat:prefix()).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
@@ -126,4 +125,4 @@ stats() ->
     ].
 
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_stat:update(lists:flatten([?Prefix, ?APP | [Name]]), IncrBy, Type).
