@@ -26,7 +26,7 @@
 -export([start_link /0, register_stats/0,
          get_stats/0, get_info/0,
          get_value/0, get_stat/1,
-         update/1, update/3,
+         update/1,
          stats/0]).
 
 %% gen_server callbacks
