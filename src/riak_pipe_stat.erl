@@ -19,7 +19,6 @@
 %%
 %% @doc Collector for various pipe stats.
 -module(riak_pipe_stat).
--include("riak_core/include/riak_stat.hrl").
 
 -behaviour(gen_server).
 
@@ -36,6 +35,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
+-define(Prefix, riak).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
