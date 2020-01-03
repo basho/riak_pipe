@@ -103,12 +103,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc Update the given `Stat'.
 -spec do_update(term()) -> ok.
 do_update(create) ->
-  ok = update([pipeline, create], 1, spiral),
-  update([pipeline, active], 1, counter);
+    update_stat([pipeline, create], 1, spiral),
+    update_stat([pipeline, active], 1, counter);
 do_update(create_error) ->
-  update([pipeline, create, error], 1, spiral);
+    update_stat([pipeline, create, error], 1, spiral);
 do_update(destroy) ->
-  update([pipeline, active], -1, counter).
+    update_stat([pipeline, active], -1, counter).
 
 %% -------------------------------------------------------------------
 %% Private
@@ -124,5 +124,5 @@ stats() ->
      {[pipeline, active], counter, [], [{value, pipeline_active}]}
     ].
 
-update(Name, IncrBy, Type) ->
+update_stat(Name, IncrBy, Type) ->
   riak_stat:update(lists:flatten([?Prefix, ?APP | [Name]]), IncrBy, Type).
