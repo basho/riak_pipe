@@ -19,7 +19,7 @@
 %%
 %% @doc Collector for various pipe stats.
 -module(riak_pipe_stat).
--include_lib("riak_core/include/riak_stat.hrl").
+-include("riak_core/include/riak_stat.hrl").
 
 -behaviour(gen_server).
 
