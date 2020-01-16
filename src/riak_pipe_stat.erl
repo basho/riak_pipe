@@ -67,6 +67,9 @@ get_stat(Stat) ->
 
 %% -------------------------------------------------------------------
 
+update({create, Pid}) ->
+    erlang:monitor(process, Pid),
+    do_update(create);
 update(Arg) ->
     do_update(Arg).
 
@@ -79,10 +82,6 @@ init([]) ->
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({update, {create, Pid}}, State) ->
-    erlang:monitor(process, Pid),
-    do_update(create),
-    {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
 
