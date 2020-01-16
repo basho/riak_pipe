@@ -49,26 +49,26 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-  riak_stat:register(?APP, stats()).
+    riak_stat:register(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
-  get_stat(?APP).
+    get_stat(?APP).
 
 get_info() ->
-  riak_stat:get_info(?APP).
+    riak_stat:get_info(?APP).
 
 get_value() ->
-  riak_stat:get_value(?APP).
+    riak_stat:get_value(?APP).
 
 get_stat(Stat) ->
-  riak_stat:get_stats(Stat).
+    riak_stat:get_stats(Stat).
 
 %% -------------------------------------------------------------------
 
 update(Arg) ->
-    gen_server:cast(?SERVER, {update, Arg}).
+    do_update(Arg).
 
 %% gen_server
 
@@ -82,9 +82,6 @@ handle_call(_Req, _From, State) ->
 handle_cast({update, {create, Pid}}, State) ->
     erlang:monitor(process, Pid),
     do_update(create),
-    {noreply, State};
-handle_cast({update, Arg}, State) ->
-    do_update(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -126,4 +123,5 @@ stats() ->
     ].
 
 update_stat(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?Prefix, ?APP | [Name]]), IncrBy, Type).
+    StatName = lists:flatten([?Prefix, ?APP | [Name]]),
+    riak_stat:update(StatName, IncrBy, Type).
