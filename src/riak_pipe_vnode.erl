@@ -833,7 +833,7 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
             lager:error(
               "Pipe worker startup failed:~n"
               "   ~p:~p~n   ~p",
-              [Type, Reason, ?_get_stacktrace_(StackTrace)]),
+              [Type, Reason, ?_get_stacktrace_(StackToken)]),
             worker_startup_failed
     end.
 
