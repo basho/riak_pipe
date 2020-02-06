@@ -49,7 +49,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    riak_stat:register(?APP, stats()).
+    riak_core_stats_mgr:register(?APP, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
@@ -57,13 +57,13 @@ get_stats() ->
     get_stat(?APP).
 
 get_info() ->
-    riak_stat:get_info(?APP).
+    riak_core_stats_mgr:get_info(?APP).
 
 get_value() ->
-    riak_stat:get_value(?APP).
+    riak_core_stats_mgr:get_value(?APP).
 
 get_stat(Stat) ->
-    riak_stat:get_stats(Stat).
+    riak_core_stats_mgr:get_stats(Stat).
 
 %% -------------------------------------------------------------------
 
@@ -123,4 +123,4 @@ stats() ->
 
 update_stat(Name, IncrBy, Type) ->
     StatName = lists:flatten([?Prefix, ?APP | [Name]]),
-    riak_stat:update(StatName, IncrBy, Type).
+    riak_core_stats_mgr:update(StatName, IncrBy, Type).
