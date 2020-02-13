@@ -1,6 +1,9 @@
 riak_pipe_qcover_fsm.erl:43: Callback info about the riak_core_coverage_fsm behaviour is not available
 riak_pipe_vnode.erl:24: Callback info about the riak_core_vnode behaviour is not available
 riak_pipe_fitting.erl:571: The variable QLimit can never match since previous clauses completely covered the type pos_integer()
+riak_pipe_v.erl:120: Function type_of/1 has no local return
+riak_pipe_v.erl:122: The attempt to match a term of type erl_types:erl_type() against the pattern {'c', 'identifier', [Type | _], _} breaks the opaqueness of the term
+riak_pipe_v.erl:124: The attempt to match a term of type erl_types:erl_type() against the pattern {'c', Type, _, _} breaks the opaqueness of the term
 Unknown functions:
   cluster_info:format/3
   cluster_info:register_app/1
