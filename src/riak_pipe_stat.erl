@@ -24,8 +24,7 @@
 
 %% API
 -export([start_link /0, register_stats/0,
-         get_stats/0, get_info/0,
-         get_value/0, get_stat/1,
+         get_stats/0, get_value/0, get_stat/1,
          update/1,
          stats/0]).
 
@@ -35,7 +34,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_pipe).
--define(Prefix, riak).
+-define(PREFIX, riak).
 
 -type stat_type() :: counter | spiral.
 -type stat_options() :: [tuple()].
@@ -49,21 +48,18 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    riak_core_stats_mgr:register(?APP, stats()).
+    lists:foreach(fun(Stat) -> stats:register([?PREFIX,?APP|Stat]) end, stats()).
 
 %% @doc Return current aggregation of all stats.
 -spec get_stats() -> proplists:proplist().
 get_stats() ->
     get_stat(?APP).
 
-get_info() ->
-    riak_core_stats_mgr:get_info(?APP).
-
 get_value() ->
-    riak_core_stats_mgr:get_value(?APP).
+    stats:get_value(?APP).
 
 get_stat(Stat) ->
-    riak_core_stats_mgr:get_stats(Stat).
+    stats:get_stats(Stat).
 
 %% -------------------------------------------------------------------
 
@@ -122,5 +118,5 @@ stats() ->
     ].
 
 update_stat(Name, IncrBy, Type) ->
-    StatName = lists:flatten([?Prefix, ?APP | [Name]]),
-    riak_core_stats_mgr:update(StatName, IncrBy, Type).
+    StatName = lists:flatten([?PREFIX, ?APP | [Name]]),
+    stats:update(StatName, IncrBy, Type).
