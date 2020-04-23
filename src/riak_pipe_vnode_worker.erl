@@ -127,7 +127,11 @@
 %%
 -module(riak_pipe_vnode_worker).
 
--behaviour(gen_fsm_compat).
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2}]}).
+
+-behaviour(gen_fsm).
 
 %% API
 -export([start_link/3]).
@@ -140,7 +144,7 @@
          send_output/4,
          send_output/5]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([
          init/1,
          initial_input_request/2,
@@ -184,14 +188,14 @@
                  riak_pipe_fitting:details()) ->
          {ok, pid()} | ignore | {error, term()}.
 start_link(Partition, VnodePid, FittingDetails) ->
-    gen_fsm_compat:start_link(?MODULE, [Partition, VnodePid, FittingDetails], []).
+    gen_fsm:start_link(?MODULE, [Partition, VnodePid, FittingDetails], []).
 
 %% @doc Send input to the worker.  Note: this should only be called
 %%      by the vnode that owns the worker, as the result of the worker
 %%      asking for its next input.
 -spec send_input(pid(), done | {term(), riak_core_apl:preflist()}) -> ok.
 send_input(WorkerPid, Input) ->
-    gen_fsm_compat:send_event(WorkerPid, {input, Input}).
+    gen_fsm:send_event(WorkerPid, {input, Input}).
 
 %% @doc Ask the worker to merge handoff data from an archived worker.
 %%      Note: this should only be called by the vnode that owns the
@@ -200,14 +204,14 @@ send_input(WorkerPid, Input) ->
 %%      fitting.
 -spec send_handoff(pid(), Archive::term()) -> ok.
 send_handoff(WorkerPid, Handoff) ->
-    gen_fsm_compat:send_event(WorkerPid, {handoff, Handoff}).
+    gen_fsm:send_event(WorkerPid, {handoff, Handoff}).
 
 %% @doc Ask the worker to archive itself.  The worker will send the
 %%      archive data to the owning vnode when it has done so.  Once
 %%      it has sent the archive, the worker shuts down normally.
 -spec send_archive(pid()) -> ok.
 send_archive(WorkerPid) ->
-    gen_fsm_compat:send_event(WorkerPid, archive).
+    gen_fsm:send_event(WorkerPid, archive).
 
 %% @equiv send_output(Output, FromPartition, Details, infinity)
 send_output(Output, FromPartition, Details) ->
@@ -308,7 +312,7 @@ send_output(Output, FromPartition,
     end.
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
 %% @doc Initialize the worker.  This function calls the implementing

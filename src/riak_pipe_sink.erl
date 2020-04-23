@@ -24,6 +24,10 @@
 %%      `#pipe_result{}', `#pipe_log{}', and `#pipe_eoi{}'.
 -module(riak_pipe_sink).
 
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_event, 3}]}).
+
 -export([
          result/4,
          log/4,
@@ -38,7 +42,7 @@
 %% have to transform the 'receive' of the work results
 -compile({parse_transform, pulse_instrument}).
 %% don't trasnform toplevel test functions
--compile({pulse_replace_module,[{gen_fsm_compat,pulse_gen_fsm}]}).
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
 -endif.
 
 -export_type([sink_type/0]).
@@ -125,18 +129,18 @@ send_to_sink(Pid, Msg, {fsm, Period, Timeout}) ->
     end.
 
 send_to_sink_fsm(Pid, Msg, _Timeout, false, Count) ->
-    gen_fsm_compat:send_event(Pid, Msg),
+    gen_fsm:send_event(Pid, Msg),
     put(sink_sync, Count+1),
     ok;
 send_to_sink_fsm(Pid, Msg, Timeout, true, _Count) ->
     try
-        gen_fsm_compat:sync_send_event(Pid, Msg, Timeout),
+        gen_fsm:sync_send_event(Pid, Msg, Timeout),
         put(sink_sync, 0),
         ok
     catch
         exit:{timeout,_} ->
             {error, timeout};
-        exit:{_Reason,{gen_fsm_compat,sync_send_event,_}} ->
+        exit:{_Reason,{gen_fsm,sync_send_event,_}} ->
             %% we don't care why it died, just that it did ('noproc'
             %% and 'normal' have been seen; others could be possible)
             {error, sink_died};

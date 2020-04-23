@@ -23,7 +23,13 @@
 %%      for this stage of the pipeline.
 -module(riak_pipe_fitting).
 
--behaviour(gen_fsm_compat).
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
+-behaviour(gen_fsm).
 
 %% API
 -export([start_link/4]).
@@ -34,7 +40,7 @@
 -export([validate_fitting/1,
          format_name/1]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([init/1,
          wait_upstream_eoi/2, wait_upstream_eoi/3,
          wait_workers_done/3,
@@ -57,7 +63,7 @@
 %% have to transform the 'receive' of the work results
 -compile({parse_transform, pulse_instrument}).
 %% don't trasnform toplevel test functions
--compile({pulse_replace_module,[{gen_fsm_compat,pulse_gen_fsm}]}).
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
 -endif.
 
 -record(worker, {partition :: riak_pipe_vnode:partition(),
@@ -86,7 +92,7 @@
                  riak_pipe:exec_opts()) ->
          {ok, pid(), riak_pipe:fitting()} | ignore | {error, term()}.
 start_link(Builder, Spec, Output, Options) ->
-    case gen_fsm_compat:start_link(?MODULE, [Builder, Spec, Output, Options], []) of
+    case gen_fsm:start_link(?MODULE, [Builder, Spec, Output, Options], []) of
         {ok, Pid} ->
             {ok, Pid, fitting_record(Pid, Spec, Output)};
         Error ->
@@ -96,7 +102,7 @@ start_link(Builder, Spec, Output, Options) ->
 %% @doc Send an end-of-inputs message to the specified coordinator.
 -spec eoi(riak_pipe:fitting()) -> ok.
 eoi(#fitting{pid=Pid, ref=Ref, chashfun=C}) when C =/= sink ->
-    gen_fsm_compat:send_event(Pid, {eoi, Ref}).
+    gen_fsm:send_event(Pid, {eoi, Ref}).
 
 %% @doc Request the details about this fitting.  The ring partition
 %%      index of the vnode requesting the details is included such
@@ -108,7 +114,7 @@ eoi(#fitting{pid=Pid, ref=Ref, chashfun=C}) when C =/= sink ->
          {ok, details()} | gone.
 get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
     try
-        gen_fsm_compat:sync_send_event(Pid, {get_details, Ref, Partition, self()})
+        gen_fsm:sync_send_event(Pid, {get_details, Ref, Partition, self()})
     catch exit:_ ->
             %% catching all exit types here , since we don't care
             %% whether the coordinator was gone before we asked ('noproc')
@@ -124,7 +130,7 @@ get_details(#fitting{pid=Pid, ref=Ref}, Partition) ->
 -spec worker_done(riak_pipe:fitting()) -> ok | gone.
 worker_done(#fitting{pid=Pid, ref=Ref}) ->
     try
-        gen_fsm_compat:sync_send_event(Pid, {done, Ref, self()})
+        gen_fsm:sync_send_event(Pid, {done, Ref, self()})
     catch exit:_ ->
             %% catching all exit types here , since we don't care
             %% whether the coordinator was gone before we asked ('noproc')
@@ -138,7 +144,7 @@ worker_done(#fitting{pid=Pid, ref=Ref}) ->
 -spec workers(pid()) -> {ok, [riak_pipe_vnode:partition()]} | gone.
 workers(Fitting) ->
     try
-        {ok, gen_fsm_compat:sync_send_all_state_event(Fitting, workers)}
+        {ok, gen_fsm:sync_send_all_state_event(Fitting, workers)}
     catch exit:_ ->
             %% catching all exit types here , since we don't care
             %% whether the coordinator was gone before we asked ('noproc')
@@ -148,7 +154,7 @@ workers(Fitting) ->
     end.
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
 %% @doc Initialize the coordinator.  This function monitors the
