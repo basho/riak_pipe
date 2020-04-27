@@ -28,6 +28,7 @@
 -compile({nowarn_deprecated_function, 
             [{gen_fsm, start_link, 3},
                 {gen_fsm, sync_send_event, 2},
+                {gen_fsm, sync_send_event, 3},
                 {gen_fsm, sync_send_all_state_event, 2}]}).
 
 -behaviour(gen_fsm).
