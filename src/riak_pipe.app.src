@@ -7,8 +7,7 @@
                   kernel,
                   stdlib,
                   sasl,
-                  riak_core,
-                  gen_fsm_compat
+                  riak_core
                  ]},
   {mod, { riak_pipe_app, []}},
   {env, []}

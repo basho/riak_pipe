@@ -25,7 +25,13 @@
 %%      the client asks to find the head fitting.
 -module(riak_pipe_builder).
 
--behaviour(gen_fsm_compat).
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, sync_send_event, 2},
+                {gen_fsm, sync_send_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
+-behaviour(gen_fsm).
 
 %% API
 -export([start_link/2]).
@@ -33,7 +39,7 @@
          pipeline/1,
          destroy/1]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([init/1,
          wait_pipeline_shutdown/2,
          wait_pipeline_shutdown/3,
@@ -51,7 +57,7 @@
 %% have to transform the 'receive' of the work results
 -compile({parse_transform, pulse_instrument}).
 %% don't trasnform toplevel test functions
--compile({pulse_replace_module,[{gen_fsm_compat,pulse_gen_fsm}]}).
+-compile({pulse_replace_module,[{gen_fsm,pulse_gen_fsm}]}).
 -endif.
 
 -record(state, {options :: riak_pipe:exec_opts(),
@@ -70,7 +76,7 @@
 -spec start_link([riak_pipe:fitting_spec()], riak_pipe:exec_opts()) ->
          {ok, pid(), reference()} | ignore | {error, term()}.
 start_link(Spec, Options) ->
-    case gen_fsm_compat:start_link(?MODULE, [Spec, Options], []) of
+    case gen_fsm:start_link(?MODULE, [Spec, Options], []) of
         {ok, Pid} ->
             {sink, #fitting{ref=Ref}} = lists:keyfind(sink, 1, Options),
             {ok, Pid, Ref};
@@ -84,7 +90,7 @@ start_link(Spec, Options) ->
 -spec fitting_pids(pid()) -> {ok, FittingPids::[pid()]} | gone.
 fitting_pids(Builder) ->
     try
-        {ok, gen_fsm_compat:sync_send_all_state_event(Builder, fittings)}
+        {ok, gen_fsm:sync_send_all_state_event(Builder, fittings)}
     catch exit:{noproc, _} ->
             gone
     end.
@@ -94,13 +100,13 @@ fitting_pids(Builder) ->
 %%      finished building the pipeline.
 -spec pipeline(pid()) -> {ok, #pipe{}} | gone.
 pipeline(BuilderPid) ->
-    gen_fsm_compat:sync_send_event(BuilderPid, pipeline).
+    gen_fsm:sync_send_event(BuilderPid, pipeline).
 
 %% @doc Shutdown the pipeline built by this builder.
 -spec destroy(pid()) -> ok.
 destroy(BuilderPid) ->
     try
-        gen_fsm_compat:sync_send_event(BuilderPid, destroy, infinity)
+        gen_fsm:sync_send_event(BuilderPid, destroy, infinity)
     catch exit:_Reason ->
             %% the builder exited before the call completed,
             %% since we were shutting it down anyway, this is ok
@@ -108,10 +114,10 @@ destroy(BuilderPid) ->
     end.
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
-%% @doc Initialize the builder fsm (gen_fsm_compat callback).
+%% @doc Initialize the builder fsm (gen_fsm callback).
 -spec init([ [riak_pipe:fitting_spec()] | riak_pipe:exec_opts() ]) ->
          {ok, wait_pipeline_shutdown, state()}.
 init([Spec, Options]) ->

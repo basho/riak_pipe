@@ -22,7 +22,13 @@
 %% pipe fsm-style sink.
 -module(reduce_fitting_pulse_sink).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
+
+-compile([{nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, sync_send_event, 3},
+                {gen_fsm, reply, 2}]}]).
+
 %% compiler gets angry if behavior functions are not exported explicitly
 -export([init/1,handle_event/3,handle_sync_event/4,terminate/3,
          handle_info/3,code_change/4]).

@@ -1,7 +1,8 @@
 language: erlang
-notifications:
-  webhooks: http://basho-engbot.herokuapp.com/travis?key=cf2b9b83873cc2de2a01fad26e1c98cf2882fb02
-  email: eng@basho.com
-script: "make dialyzer xref test"
 otp_release:
-  - R16B02
+  - 20.3.8
+  - 21.3
+  - 22.3
+script:
+  - chmod u+x rebar3
+  - ./rebar3 do upgrade, compile, xref, dialyzer, eunit
