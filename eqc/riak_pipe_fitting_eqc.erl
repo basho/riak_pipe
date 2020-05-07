@@ -21,7 +21,7 @@
 %% @doc Exercise riak_pipe_fitting.
 -module(riak_pipe_fitting_eqc).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(EQC).
 

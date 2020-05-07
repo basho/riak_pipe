@@ -38,7 +38,7 @@
          done/1]).
 
 %% console debugging convenience
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").

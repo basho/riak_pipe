@@ -10,3 +10,4 @@ EUnit-SASL.log
 .rebar3
 rebar.lock
 _build
+.eqc-info
