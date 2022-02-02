@@ -1,6 +1,6 @@
 Riak Pipelines
 
-[[http://travis-ci.org/basho/riak_pipe][Travis-CI]] :: [[https://secure.travis-ci.org/basho/riak_pipe.png]]
+[![Erlang CI Actions Status](https://github.com/basho/riak_pipe/workflows/Erlang%20CI/badge.svg)](https://github.com/basho/riak_pipe/actions)
 
 * Overview
 

@@ -50,6 +50,8 @@
          terminate/3,
          code_change/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_pipe.hrl").
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
@@ -464,7 +466,7 @@ validate_fitting(#fitting_spec{name=Name,
     case riak_pipe_v:validate_module("module", Module) of
         ok -> ok;
         {error, ModError} ->
-            lager:error(
+            ?LOG_ERROR(
               "Invalid module in fitting spec \"~s\": ~s",
               [format_name(Name), ModError]),
             throw({badarg, Name, ModError})
@@ -472,7 +474,7 @@ validate_fitting(#fitting_spec{name=Name,
     case validate_argument(Module, Arg) of
         ok -> ok;
         {error, ArgError} ->
-            lager:error(
+            ?LOG_ERROR(
               "Invalid module argument in fitting spec \"~s\": ~s",
               [format_name(Name), ArgError]),
             throw({badarg, Name, ArgError})
@@ -480,7 +482,7 @@ validate_fitting(#fitting_spec{name=Name,
     case validate_chashfun(HashFun) of
         ok -> ok;
         {error, PFError} ->
-            lager:error(
+            ?LOG_ERROR(
               "Invalid chashfun in fitting spec \"~s\": ~s",
               [format_name(Name), PFError]),
             throw({badarg, Name, PFError})
@@ -488,13 +490,13 @@ validate_fitting(#fitting_spec{name=Name,
     case validate_nval(NVal) of
         ok -> ok;
         {error, NVError} ->
-            lager:error(
+            ?LOG_ERROR(
               "Invalid nval in fitting spec \"~s\": ~s",
               [format_name(Name), NVError]),
             throw({badarg, Name, NVError})
     end;
 validate_fitting(Other) ->
-    lager:error(
+    ?LOG_ERROR(
       "Invalid fitting_spec given (expected fitting_spec record):~n~P",
       [Other, 3]),
     throw({badarg, undefined, "not a fitting_spec record"}).

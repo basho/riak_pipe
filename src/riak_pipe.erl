@@ -97,7 +97,7 @@
 -type exec_option() :: {sink, fitting()}
                      | {sink_type, riak_pipe_sink:sink_type()}
                      | {trace, list() | riak_pipe_log:trace_filter()}
-                     | {log, sink | sasl | {sink, fitting()} | lager}.
+                     | {log, sink | sasl | {sink, fitting()} | logger}.
 -type stat() :: {atom(), term()}.
 
 %% @doc Setup a pipeline.  This function starts up fitting/monitoring
@@ -203,10 +203,10 @@
 %%      all log (and trace) messages will be printed via
 %%      `error_logger' to the SASL log
 %%   </dd><dt>
-%%      `lager'
+%%      `logger'
 %%   </dt><dd>
 %%      all log (and trace) messages will be printed to the Riak
-%%      node's log via the lager utility
+%%      node's log via the logger utility
 %%   </dd></dl>
 %%</dd></dl>
 %%

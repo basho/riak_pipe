@@ -52,6 +52,8 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_debug.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
 %% have to transform the 'receive' of the work results
@@ -208,7 +210,7 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, StateName,
             case Reason of
                 normal -> ok;
                 _ ->
-                    lager:warning("~p: Fitting worker ~p died. Reason: ~p",
+                    ?LOG_WARNING("~p: Fitting worker ~p died. Reason: ~p",
                                   [StateName, Pid, Reason])
             end,
             maybe_shutdown(Reason,

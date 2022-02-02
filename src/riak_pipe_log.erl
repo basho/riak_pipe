@@ -26,6 +26,7 @@
          trace/3]).
 
 -include("riak_pipe.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export_type([trace_filter/0]).
 
@@ -44,7 +45,7 @@
 %%      set to `sink', log messages are sent to the sink.  If the
 %%      option was set to `sasl', log messages are printed via
 %%      `error_logger' to the SASL log.  If the option was set to
-%%      `lager', log messages are printed via `lager' to the Riak
+%%      `logger', log messages are printed via `logger' to the Riak
 %%      node's log.  If no option was given, log messages are
 %%      discarded.
 -spec log(riak_pipe_fitting:details(), term()) -> ok.
@@ -57,8 +58,8 @@ log(#fitting_details{options=O, name=N}, Msg) ->
             riak_pipe_sink:log(N, Sink, Msg, O);
         {sink, Sink} ->
             riak_pipe_sink:log(N, Sink, Msg, O);
-        lager ->
-            lager:info(
+        logger ->
+            ?LOG_INFO(
               "~s: ~P",
               [riak_pipe_fitting:format_name(N), Msg, 9]);
         sasl ->
