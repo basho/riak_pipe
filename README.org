@@ -1,4 +1,5 @@
 Riak Pipelines
+===========
 
 [![Erlang CI Actions Status](https://github.com/basho/riak_pipe/workflows/Erlang%20CI/badge.svg)](https://github.com/basho/riak_pipe/actions)
 
