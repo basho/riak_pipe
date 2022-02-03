@@ -55,7 +55,6 @@
 -include("riak_pipe.hrl").
 -include("riak_pipe_log.hrl").
 -include("riak_pipe_debug.hrl").
--include("stacktrace.hrl").
 
 -ifdef(namespaced_types).
 -type riak_pipe_vnode_queue() :: queue:queue().
@@ -830,11 +829,11 @@ new_worker(Fitting, #state{partition=P, worker_sup=Sup, worker_q_limit=WQL}) ->
                   "Fitting was gone before pipe worker startup"),
                 worker_startup_failed
         end
-    catch ?_exception_(Type, Reason, StackToken) ->
+    catch Class:Reason:Stacktrace ->
             ?LOG_ERROR(
               "Pipe worker startup failed:~n"
               "   ~p:~p~n   ~p",
-              [Type, Reason, ?_get_stacktrace_(StackToken)]),
+              [Class, Reason, Stacktrace]),
             worker_startup_failed
     end.
 
