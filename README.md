@@ -452,14 +452,17 @@ will be passed in as the state when evaluating the next input, much like
 the "accumulator" of a list-fold function). The `Result` may be any of
 the following:
 
-`ok`
+#### `ok`
+
 processing succeeded, and work may begin on the next input
 
-`forward_preflist`
+#### `forward_preflist`
+
 this input should be forwarded to the next vnode in its preflist, for
 processing there
 
-`{error, Reason}`
+#### `{error, Reason}`
+
 this input generated an error; it should not be retried on other nodes
 in the preflist, and an error should be logged
 
