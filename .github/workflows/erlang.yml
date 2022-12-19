@@ -1,10 +1,11 @@
 name: Erlang CI
-  
+
 on:
   push:
     branches: [ develop-3.0 ]
   pull_request:
     branches: [ develop-3.0 ]
+
 
 jobs:
 
@@ -12,12 +13,19 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        otp:
+          - "22.3.4.24"
+
     container:
-      image: erlang:22.3.3
+      image: erlang:${{ matrix.otp }}
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Compile
-      run: rebar3 compile
-    - name: Run tests
-      run: rebar3 do xref, dialyzer, eunit
+      - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: ./rebar3 compile
+      - name: Run xref, dialyzer and eunit
+        run: ./rebar3 do xref, dialyzer, eunit
