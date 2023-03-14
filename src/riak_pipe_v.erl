@@ -119,34 +119,24 @@ validate_exported_function(Label, Arity, Module, Function) ->
     pid | reference | list | tuple | atom | number | binary | function.
 
 -spec type_of(term()) -> checkable_types() | unidentified.
-type_of(Term) ->
-    Checkers =
-        [{fun erl_types:t_is_pid/1, pid},
-            {fun erl_types:t_is_reference/1, reference},
-            {fun erl_types:t_is_list/1, list},
-            {fun erl_types:t_is_tuple/1, tuple},
-            {fun erl_types:t_is_atom/1, atom},
-            {fun erl_types:t_is_number/1, number},
-            {fun erl_types:t_is_binary/1, binary},
-            {fun erl_types:t_is_fun/1, function}],
-    element(
-        1,
-        lists:foldl(
-            fun({CheckFun, Result}, Acc) ->
-                case Acc of
-                    {unidentified, T} ->
-                        case CheckFun(T) of
-                            true ->
-                                {Result, T};
-                            false ->
-                                {unidentified, T}
-                        end;
-                    Acc ->
-                        Acc
-                end
-            end,
-            {unidentified, erl_types:t_from_term(Term)},
-            Checkers)).
+type_of(Pid) when is_pid(Pid) ->
+    pid;
+type_of(Ref) when is_reference(Ref) ->
+    reference;
+type_of(List) when is_list(List) ->
+    list;
+type_of(Tuple) when is_tuple(Tuple) ->
+    tuple;
+type_of(Atom) when is_atom(Atom) ->
+    atom;
+type_of(Number) when is_number(Number) ->
+    number;
+type_of(Binary) when is_binary(Binary) ->
+    binary;
+type_of(Fun) when is_function(Fun) ->
+    function;
+type_of(_Other) ->
+    unidentified.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
