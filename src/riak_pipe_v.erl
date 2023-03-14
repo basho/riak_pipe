@@ -60,7 +60,7 @@ validate_module(Label, Module) ->
 %%      If validation completes successfully, the atom `ok' is
 %%      returned.  If validation failes, an `{error, Reason}' tuple is
 %%      returned.  (`Label' is used in the error message).
--spec validate_function(string(), integer(), fun() | {atom(), atom()}) ->
+-spec validate_function(string(), integer(), any() | {atom(), atom()}) ->
          ok | {error, iolist()}.
 validate_function(Label, Arity, {Module, Function})
   when is_atom(Module), is_atom(Function) ->
@@ -115,12 +115,52 @@ validate_exported_function(Label, Arity, Module, Function) ->
 %% pid = riak_pipe_v:type_of(self()).
 %% function = riak_pipe_v:type_of(fun() -> ok end).
 %% '''
--spec type_of(term()) -> pid | reference | list | tuple | atom
-                       | number | binary | function.
+-type checkable_types() ::
+    pid | reference | list | tuple | atom | number | binary | function.
+
+-spec type_of(term()) -> checkable_types() | unidentified.
 type_of(Term) ->
-    case erl_types:t_from_term(Term) of
-        {c,identifier,[Type|_],_} ->
-            Type; % pid,reference
-        {c,Type,_,_} ->
-            Type  % list,tuple,atom,number,binary,function
-    end.
+    Checkers =
+        [{fun erl_types:t_is_pid/1, pid},
+            {fun erl_types:t_is_reference/1, reference},
+            {fun erl_types:t_is_list/1, list},
+            {fun erl_types:t_is_tuple/1, tuple},
+            {fun erl_types:t_is_atom/1, atom},
+            {fun erl_types:t_is_number/1, number},
+            {fun erl_types:t_is_binary/1, binary},
+            {fun erl_types:t_is_fun/1, function}],
+    element(
+        1,
+        lists:foldl(
+            fun({CheckFun, Result}, Acc) ->
+                case Acc of
+                    {unidentified, T} ->
+                        case CheckFun(erl_types:t_from_term(T)) of
+                            true ->
+                                {Result, T};
+                            false ->
+                                {unidentified, T}
+                        end;
+                    Acc ->
+                        Acc
+                end
+            end,
+            {unidentified, Term},
+            Checkers)).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+check_types_test() ->
+    P = self(),
+    ?assert(pid == type_of(P)),
+    L = [],
+    ?assert(list == type_of(L)),
+    T = {},
+    ?assert(tuple == type_of(T)),
+    M = #{},
+    ?assert(unidentified == type_of(M)).
+
+
+-endif.
+        

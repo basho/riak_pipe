@@ -7,7 +7,10 @@
                   kernel,
                   stdlib,
                   sasl,
-                  riak_core
+                  riak_core,
+                  cluster_info,
+                  exometer_core,
+                  dialyzer
                  ]},
   {mod, { riak_pipe_app, []}},
   {env, []}
