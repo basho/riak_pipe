@@ -135,7 +135,7 @@ type_of(Term) ->
             fun({CheckFun, Result}, Acc) ->
                 case Acc of
                     {unidentified, T} ->
-                        case CheckFun(erl_types:t_from_term(T)) of
+                        case CheckFun(T) of
                             true ->
                                 {Result, T};
                             false ->
@@ -145,7 +145,7 @@ type_of(Term) ->
                         Acc
                 end
             end,
-            {unidentified, Term},
+            {unidentified, erl_types:t_from_term(Term)},
             Checkers)).
 
 -ifdef(TEST).
