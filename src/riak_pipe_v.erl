@@ -60,7 +60,7 @@ validate_module(Label, Module) ->
 %%      If validation completes successfully, the atom `ok' is
 %%      returned.  If validation failes, an `{error, Reason}' tuple is
 %%      returned.  (`Label' is used in the error message).
--spec validate_function(string(), integer(), fun() | {atom(), atom()}) ->
+-spec validate_function(string(), integer(), any() | {atom(), atom()}) ->
          ok | {error, iolist()}.
 validate_function(Label, Arity, {Module, Function})
   when is_atom(Module), is_atom(Function) ->
@@ -115,12 +115,42 @@ validate_exported_function(Label, Arity, Module, Function) ->
 %% pid = riak_pipe_v:type_of(self()).
 %% function = riak_pipe_v:type_of(fun() -> ok end).
 %% '''
--spec type_of(term()) -> pid | reference | list | tuple | atom
-                       | number | binary | function.
-type_of(Term) ->
-    case erl_types:t_from_term(Term) of
-        {c,identifier,[Type|_],_} ->
-            Type; % pid,reference
-        {c,Type,_,_} ->
-            Type  % list,tuple,atom,number,binary,function
-    end.
+-type checkable_types() ::
+    pid | reference | list | tuple | atom | number | binary | function.
+
+-spec type_of(term()) -> checkable_types() | unidentified.
+type_of(Pid) when is_pid(Pid) ->
+    pid;
+type_of(Ref) when is_reference(Ref) ->
+    reference;
+type_of(List) when is_list(List) ->
+    list;
+type_of(Tuple) when is_tuple(Tuple) ->
+    tuple;
+type_of(Atom) when is_atom(Atom) ->
+    atom;
+type_of(Number) when is_number(Number) ->
+    number;
+type_of(Binary) when is_binary(Binary) ->
+    binary;
+type_of(Fun) when is_function(Fun) ->
+    function;
+type_of(_Other) ->
+    unidentified.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+check_types_test() ->
+    P = self(),
+    ?assert(pid == type_of(P)),
+    L = [],
+    ?assert(list == type_of(L)),
+    T = {},
+    ?assert(tuple == type_of(T)),
+    M = #{},
+    ?assert(unidentified == type_of(M)).
+
+
+-endif.
+        
